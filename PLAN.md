@@ -38,6 +38,7 @@ When zero primary write interruption is required, Porteau recommends and support
 | Human logging | consola | Normal, quiet, verbose, and non-interactive output |
 | Configuration | c12 + Porteau merger | YAML discovery with replacement precedence and Valibot validation |
 | Validation | Valibot | Runtime validation of config, flags, manifests, and normalized events |
+| MySQL protocol | Direct protocol client (`mysql2` is the Phase 2 candidate) | Catalog, privilege, capability, and destination preflight queries without depending on the `mysql` CLI |
 | Structured errors | nostics.dev | Actionable domain errors rendered at the CLI boundary |
 | Backup engine | mydumper/myloader v1 | Pinned, capability-tested external binaries |
 | Full-screen terminal UI | None | Conventional terminal output is simpler and more portable |
@@ -60,7 +61,7 @@ When zero primary write interruption is required, Porteau recommends and support
 Mydumper/myloader best matches Porteau’s distinguishing requirements:
 
 1. **Independent per-table object scopes.** A table can export schema, data, triggers, all objects, or nothing in one consistent run.
-2. **Versioned machine output.** `--machine-log-json` emits JSON Lines with schema and event versions, progress fields, errors, retries, and completion summaries.
+2. **Intended versioned machine output.** `--machine-log-json` is expected to emit JSON Lines suitable for progress and completion handling; the exact streams, versions, fields, and event coverage remain provisional until fixture-backed qualification against the pinned binaries in Phase 2.
 3. **Production controls.** It exposes lock modes, transactional-only behavior, adaptive chunking, per-table concurrency, query-duration targets, and workload-aware throttling.
 4. **Manageable artifacts.** It creates separate metadata, schema, and data files that remain inspectable and portable.
 5. **Broader server compatibility.** Its implementation recognizes Oracle MySQL, Percona Server, MariaDB, RDS/Aurora, Google-hosted MySQL, and TiDB, although Porteau will still capability-test rather than claim universal support.
@@ -114,6 +115,8 @@ This is an isolation boundary, not a plugin framework. Implement only `MydumperE
 
 ## 4. Architecture
 
+The following is the target layout. Files marked `(implemented)` exist at the end of Phase 1; the remaining paths are introduced only when their owning phase needs them.
+
 ```text
 porteau/
 ├── install.sh                       # Generated Ubuntu dependency bootstrap
@@ -121,29 +124,29 @@ porteau/
 ├── vite.config.ts
 ├── porteau.config.yaml
 ├── src/
-│   ├── cli.ts                       # citty entrypoint and top-level error boundary
+│   ├── cli.ts                       # citty entrypoint (implemented); top-level error boundary follows
 │   ├── commands/
-│   │   ├── backup.ts
-│   │   ├── restore.ts
-│   │   ├── init.ts
-│   │   ├── setup.ts
-│   │   ├── doctor.ts
-│   │   └── config.ts
+│   │   ├── backup.ts                # Command skeleton implemented
+│   │   ├── restore.ts               # Command skeleton implemented
+│   │   ├── init.ts                  # Command skeleton implemented
+│   │   ├── setup.ts                 # Command skeleton implemented
+│   │   ├── doctor.ts                # Command skeleton implemented
+│   │   └── config.ts                # Command skeleton implemented
 │   ├── core/
-│   │   ├── engine.ts                # Narrow engine capabilities and request types
+│   │   ├── engine.ts                # Narrow engine capabilities and request types (implemented)
 │   │   ├── mydumper.ts              # mydumper subprocess adapter
 │   │   ├── myloader.ts              # myloader subprocess adapter
-│   │   ├── events.ts                # Porteau-owned normalized events
+│   │   ├── events.ts                # Porteau-owned normalized event schema (implemented)
 │   │   ├── process.ts               # Child lifecycle, process groups, and signals
 │   │   ├── preflight.ts             # Server, engine, privilege, lock, and capacity checks
 │   │   ├── artifact.ts              # Completion and metadata verification
-│   │   ├── config.ts                # c12 + replacement merger + Valibot
+│   │   ├── config.ts                # c12 + replacement merger + Valibot (implemented)
 │   │   ├── filters.ts               # Pattern expansion and object-scope resolution
 │   │   ├── credentials.ts           # Temporary protected defaults files
 │   │   └── tools.ts                 # Binary resolution and version checks
 │   ├── setup/
-│   │   ├── manifest.json            # Canonical supported package/digest manifest
-│   │   ├── manifest.ts              # Validated TypeScript access
+│   │   ├── manifest.json            # Canonical supported package/digest manifest (implemented)
+│   │   ├── manifest.ts              # Validated TypeScript access (implemented)
 │   │   ├── ubuntu.ts                # Guarded apt installer
 │   │   └── diagnostics.ts
 │   ├── presentation/
@@ -174,13 +177,13 @@ porteau/
 3. Load and merge flags, environment variables, YAML configuration, and defaults.
 4. Validate the complete request with Valibot.
 5. Prompt only for required missing values when prompting is allowed.
-6. Resolve mydumper and myloader from explicit environment override, explicit config path, then `PATH`.
+6. Resolve mydumper and myloader from explicit environment override, explicit config path, then `PATH`. An invalid explicit path is terminal and must not fall through.
 7. Verify both binaries start, report versions, match one another, and satisfy the compatibility manifest.
-8. Connect with least-privilege credentials and run preflight checks.
+8. Connect through the selected direct MySQL protocol client with least-privilege credentials and run preflight checks; do not shell out to a `mysql` client.
 9. Expand table patterns and resolve exactly one object scope for every selected table.
 10. Show a sanitized operation summary and request confirmation where needed.
 11. Create a temporary mydumper/myloader defaults file with mode `0600`.
-12. Spawn the child in its own process group with `--machine-log-json`.
+12. Spawn the child in its own process group with `--machine-log-json`; capture stdout and stderr independently and parse machine events only from the stream verified for the pinned engine release.
 13. Parse JSON Lines incrementally into validated engine events.
 14. Normalize engine events into Porteau-owned events.
 15. Render through Clack, consola, or structured JSON according to presentation mode.
@@ -310,7 +313,8 @@ Always invoke supported mydumper/myloader versions with:
 
 The parser must:
 
-- Read stderr incrementally as JSON Lines.
+- During Phase 2 qualification, capture real output from every supported mydumper/myloader operation and establish which file descriptor carries machine events. Parse only that verified stream; do not assume stderr from human-log behavior.
+- Read the verified stream incrementally as JSON Lines while preserving the other stream as bounded, redacted diagnostics.
 - Validate guaranteed fields.
 - Validate `schema_version` and `event_version` against the compatibility manifest.
 - Reject unknown major schemas instead of guessing.
@@ -318,6 +322,8 @@ The parser must:
 - Key behavior from `event`, `phase`, and `status`, not human `message` strings.
 - Preserve run ID, sequence, parent sequence, database, table, rows, bytes, retries, warnings, errors, and exit code when present.
 - Convert engine events into a stable Porteau event schema for presentation and `porteau --json` users.
+
+The implemented `src/core/events.ts` schema is the Porteau-owned normalized contract, not a claim that native events already use those field names. The mydumper/myloader adapter owns explicit native-event schemas and mapping. Before that adapter is accepted, commit a redacted fixture corpus captured from pinned binaries for backup success, restore success, warning, fatal failure, and cancellation. If the pinned binaries do not provide the planned version fields or event coverage, revise the compatibility manifest and adapter contract from observed behavior before implementing presentation code; never synthesize compatibility claims to fit the existing normalized schema.
 
 ### Backup success
 
@@ -532,7 +538,7 @@ import { defineConfig } from 'vite-plus'
 
 export default defineConfig({
   pack: {
-    entry: ['src/cli.ts'],
+    entry: 'src/cli.ts',
     format: ['esm'],
     dts: true,
     sourcemap: true,
@@ -548,7 +554,7 @@ Publish an npm package with:
 {
   "type": "module",
   "bin": {
-    "porteau": "./dist/cli.js"
+    "porteau": "./dist/cli.mjs"
   },
   "engines": {
     "node": ">=22.18.0"
@@ -568,7 +574,7 @@ Mydumper and myloader remain external system binaries. Porteau does not bundle o
 
 ## 12. Supported native-tool manifest
 
-Use `src/setup/manifest.json` as the canonical reviewed source for supported native packages and machine-log versions. `install.sh` is generated from it so Bash and TypeScript cannot drift.
+Use `src/setup/manifest.json` as the canonical reviewed source for native packages and candidate machine-log versions. Package entries are supported only after their assets and binaries are qualified; machine-log versions become supported only after fixture-backed qualification in Phase 2. `install.sh` is generated from the manifest so Bash and TypeScript cannot drift.
 
 Initial manifest:
 
@@ -802,6 +808,8 @@ Development must not require running `install.sh` against the host. Installer un
 
 ## 16. Test strategy
 
+Tests are added with the phase that introduces the behavior. Phase 2 must first turn the current minimal subprocess convention into reusable fixture executables and pin observed native machine-log fixtures. Real-MySQL tests then validate claims that mocks cannot establish. Installer tests wait for the setup backend, and presentation-mode tests wait for the presentation layer; no later phase should replace or weaken an earlier safety gate.
+
 ### Unit tests
 
 - Config precedence and Valibot errors.
@@ -860,55 +868,92 @@ Do not claim production safety based only on mocked subprocess tests.
 
 ---
 
-## 17. Implementation phases
+## 17. Current progress and compatibility baseline
 
-### Phase 1 — Verification baseline and contracts
+### Completed — Phase 1 (2026-07-20)
 
-- Scaffold with Vite+.
-- Add `package.json`, `vite.config.ts`, and npm `bin` metadata.
-- Establish `vp check`, `vp test`, and `vp pack` as green baseline commands.
-- Implement citty command skeletons.
-- Define config schema and precedence.
-- Define normalized events and engine capabilities.
-- Add the canonical compatibility manifest and validation.
-- Establish fixture subprocesses and test conventions.
+- Vite+ project, pinned pnpm package manager, Node `>=22.18.0`, ESM packaging, npm `bin`, and green `vp check`, `vp test`, and `vp pack` baseline.
+- citty entrypoint with `backup`, `restore`, `init`, `setup`, `doctor`, and `config` command skeletons.
+- Strict Valibot configuration schema with defaults, YAML-only c12 loading, replacement array semantics, and `flags → environment → YAML → defaults` precedence.
+- Safety validation that prevents production/replica profiles from weakening automatic locking, InnoDB requirements, or DDL protection.
+- Narrow `BackupEngine` boundary and Porteau-owned discriminated normalized event schema. Large native counters are intentionally represented as decimal strings to avoid JavaScript precision loss.
+- Canonical, schema-validated candidate mydumper/myloader compatibility manifest for v1.0.3-1 and the three planned Ubuntu targets. Package metadata is pinned; native machine-log versions remain provisional until Phase 2 qualification.
+- Initial subprocess fixture convention and contract tests for CLI surface, configuration, events, and manifest consistency.
 
-### Phase 2 — Safe engine integration
+The committed Phase 1 types are foundations, not frozen external APIs. `BackupRequest`, `RestoreRequest`, and `EngineCapabilities` are deliberately minimal and should grow from concrete requirements in their owning phases. Preserve the `BackupEngine` isolation boundary and normalized-event discriminant, but prefer extending these types over creating parallel command-specific request models. Phase 2 consumes only the backup-facing structural subset of `BackupEngine` (`inspect`, `backup`, and `verifyArtifact`); no concrete adapter claims to implement the full interface until Phase 5 adds `restore`. The CLI has no public JSON event compatibility promise until its schema is documented and versioned in Phase 4.
 
-- Resolve and verify mydumper/myloader.
+### Current dependency boundary
+
+Only c12, citty, and Valibot are production dependencies today. Add dependencies in their owning phase:
+
+- Phase 2: evaluate and pin a direct MySQL protocol client; `mysql2` is the initial candidate.
+- Phase 3: no presentation dependency; setup/doctor expose pure diagnostic and mutation-planning services.
+- Phase 4: `@clack/prompts`, consola, and nostics.dev, after their exact APIs and supported Node range are verified.
+
+Do not import Clack or consola into `src/core` or `src/setup`. Do not make backup correctness depend on presentation, and do not make the generated installer depend on Node or the built CLI at runtime.
+
+---
+
+## 18. Remaining implementation phases
+
+### Phase 1 — Verification baseline and contracts (complete)
+
+- The baseline listed in Section 17 is implemented.
+- Remaining subprocess scenarios and native machine-log fixtures belong to Phase 2, where their required behavior is known.
+
+### Phase 2 — Qualify and implement safe backup integration
+
+- Qualify pinned mydumper/myloader binaries first: verify version output, machine-log flag support, event stream location, native schema/version fields, completion semantics, metadata format, lock-related events, and cancellation behavior. Capture redacted fixtures and correct the manifest assumptions before building adapters.
+- Evaluate `mysql2` against the supported Node range, TLS modes, cancellation/time limits, error redaction, and large-value handling; pin it if suitable, otherwise select another direct protocol client without creating a multi-driver abstraction. Implement shared, injectable connection handling for source/destination preflight. Keep passwords out of URLs, argv, logs, and errors; set connection/TLS options directly.
+- Resolve and verify both native tools using environment override, config path, then `PATH`; reject an invalid explicit path without fallback.
 - Implement protected temporary credential files.
 - Implement process-group lifecycle and signal forwarding.
-- Implement incremental machine-log parser and version validation.
-- Implement server/table/privilege preflight.
+- Expand the subprocess fixture into deterministic success, warning, malformed/truncated event, fatal event, non-zero exit, hang, signal, and child/grandchild scenarios.
+- Implement incremental native machine-log parsing and explicit mapping into the existing normalized event schema. Preserve unknown additive native fields only as needed for diagnostics; do not leak a native schema into the public contract.
+- Implement read-only server/table/privilege/capability preflight through the selected protocol client, with abort/time limits and redacted errors.
 - Implement production, replica, and expert profiles.
 - Implement bounded lock watchdog.
 - Implement pattern expansion and per-table object scopes.
-- Implement artifact validator and atomic output finalization.
-- Add unit, process, and real-MySQL tests before UI polish.
+- Implement backup completion policy, artifact validator, and same-filesystem atomic output finalization. Refuse a pre-existing final path rather than overwriting it.
+- Wire the non-interactive `backup` command only after the service-level safety path passes. Initially use stable plain output without introducing the Phase 4 presentation stack.
+- Add unit and process tests, then real-MySQL tests for consistent backup under writes, lock behavior, filters, nontransactional rejection, and artifact integrity before UI polish.
 
-### Phase 3 — Setup and Ubuntu bootstrap
+**Exit gate:** a non-interactive backup can run end-to-end, cancellation cleans the full process tree and secret files, success requires process/event/artifact agreement, and native behavior is represented by pinned fixtures. Myloader machine-event qualification is complete even though restore mapping and destination mutation remain Phase 5. The Phase 2 adapter implements only the backup-facing structural subset of `BackupEngine`, and `vp check`, `vp test`, and `vp pack` pass.
 
-- Implement `doctor` and `setup --check` first.
-- Implement manifest-backed Ubuntu apt installation.
-- Implement `setup` confirmation and `--yes` behavior.
+### Phase 3 — Read-only diagnostics and setup backend
+
+- Implement reusable OS, architecture, tool-resolution, version, and compatibility diagnostics used by both `doctor` and setup planning.
+- Implement `doctor` and `setup --check` as read-only non-interactive commands first. Reuse Phase 2 tool inspection rather than introducing a second version parser.
+- Implement a manifest-backed Ubuntu installation planner/executor with mutation separated from policy and rendering. The backend requires an explicit approval value but must not prompt itself.
+- Implement non-interactive `setup --yes`; without `--yes`, the temporary plain CLI can print the plan and refuse mutation until Phase 4 supplies interactive confirmation.
 - Generate root `install.sh` from the canonical manifest.
 - Implement guarded Node 24 installation flow.
 - Add ShellCheck, Bats, and Ubuntu container tests.
 - Document unsupported-platform manual paths.
 
-### Phase 4 — Guided CLI experience
+The generator must consume validated canonical data, but the committed `install.sh` must remain standalone Bash because it runs before Node/Porteau may exist. A drift test regenerates to a temporary path and compares bytes. Never run installer integration tests against the host.
 
-- Add Clack wrappers and consistent cancellation.
-- Add backup, restore, init, setup, and doctor guided flows.
+**Exit gate:** diagnostics and `--check` are provably read-only, mutation requires explicit approval, generated Bash is deterministic and standalone, supported Ubuntu container tests are idempotent, and all package checks pass.
+
+### Phase 4 — Presentation boundary and guided backup/setup experience
+
+- Add and verify `@clack/prompts`, consola, and nostics.dev against the supported Node matrix.
+- Implement presentation context and the top-level error/exit-code boundary before adding prompts.
+- Add thin Clack wrappers and consistent cancellation. Keep prompt results as command inputs; core/setup services remain non-interactive.
+- Add guided backup, init, setup, doctor, and config flows. Restore can inspect/verify an artifact here, but destination mutation remains Phase 5.
 - Add interactive spinner/progress/task log adapters.
 - Add consola default/quiet/verbose non-interactive adapters.
-- Add Porteau JSON Lines output.
+- Add a versioned Porteau JSON Lines output schema based only on normalized events plus command result envelopes. Document this as the first public machine-output contract and snapshot-test it independently of native fixtures.
 - Test TTY, non-TTY, CI, redirected output, no-color, `--yes`, and `--no-interactive` behavior.
 
-### Phase 5 — Restore verification and packaging
+**Exit gate:** every interactive input has a flag/config/environment equivalent, `--json` and non-TTY modes never prompt or animate, errors render once with stable exit codes, setup uses the Phase 3 approval boundary, and presentation imports do not cross into core/setup.
 
-- Complete guarded myloader flows.
-- Add disposable restore verification.
+### Phase 5 — Guarded restore, operational verification, and release packaging
+
+- Implement myloader native-event mapping from the Phase 2-qualified fixture corpus, revalidate it in pinned-binary integration tests, and qualify destination mutation behavior before exposing restore. Extend the existing parser/event system rather than creating a second one.
+- Extend `RestoreRequest` from proven requirements and implement destination preflight through the shared direct-protocol connection layer.
+- Complete guarded myloader flows with `require-empty` as the default, explicit destination/binlog/overwrite policies, process-group cancellation, and the same process/event/artifact agreement used by backup.
+- Add disposable restore verification and real dump/restore round trips. Keep full data checksums opt-in and distinguish “backup artifact valid” from “restore operationally verified.”
 - Add npm publishing and installation smoke tests.
 - Write paired interactive and automation documentation.
 - Review shell completions and help.
@@ -916,9 +961,11 @@ Do not claim production safety based only on mocked subprocess tests.
 - Evaluate, but do not depend on, a standalone executable built with Node 26.
 - Consider a MySQL Shell backend only as a separate evidence-driven roadmap item.
 
+**Exit gate:** destructive destination behavior is impossible without explicit policy and confirmation, round-trip tests pass on the supported matrix, npm pack/install invokes `dist/cli.mjs`, documentation matches both human and JSON modes, and release artifacts contain no credentials or temporary data.
+
 ---
 
-## 18. Final decision summary
+## 19. Final decision summary
 
 | Decision | Choice | Confidence |
 |---|---|---|
@@ -946,4 +993,4 @@ Do not claim production safety based only on mocked subprocess tests.
 | Standalone packaging | Experimental secondary artifact later | Medium |
 | Full-screen terminal UI | None | High |
 
-Scaffolding should begin only from these safety, compatibility, event, artifact, and installer contracts. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.
+Phase 1 scaffolding is complete. Future work must preserve these safety, compatibility, event, artifact, and installer contracts, while correcting assumptions whenever qualification against the pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.
