@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Porteau has no persistent local services to reconnect after an orb wakes.
+echo 'Orb resume complete: no services require repair.'
