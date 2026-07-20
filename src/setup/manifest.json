@@ -1,0 +1,50 @@
+{
+  "engine": {
+    "tag": "v1.0.3-1",
+    "version": "1.0.3-1",
+    "downloadBaseUrl": "https://github.com/mydumper/mydumper/releases/download/v1.0.3-1/",
+    "tools": {
+      "mydumper": {
+        "version": "1.0.3-1",
+        "acceptedVersions": ["1.0.3-1"]
+      },
+      "myloader": {
+        "version": "1.0.3-1",
+        "acceptedVersions": ["1.0.3-1"]
+      }
+    },
+    "machineLog": {
+      "schemaVersions": ["1"],
+      "eventVersions": ["1"]
+    }
+  },
+  "assets": [
+    {
+      "ubuntu": "22.04",
+      "codename": "jammy",
+      "architecture": "amd64",
+      "filename": "mydumper_1.0.3-1.jammy_amd64.deb",
+      "url": "https://github.com/mydumper/mydumper/releases/download/v1.0.3-1/mydumper_1.0.3-1.jammy_amd64.deb",
+      "size": 1627788,
+      "sha256": "9f7fb46c03e1a721e86d71c42a3fe3bd88f1a7b0ec80fa91c7736826f7f1e6f4"
+    },
+    {
+      "ubuntu": "24.04",
+      "codename": "noble",
+      "architecture": "amd64",
+      "filename": "mydumper_1.0.3-1.noble_amd64.deb",
+      "url": "https://github.com/mydumper/mydumper/releases/download/v1.0.3-1/mydumper_1.0.3-1.noble_amd64.deb",
+      "size": 9624536,
+      "sha256": "824c3c78e9bd5311a906a383d7596ff70363e32413df44fe7c58fd8914e5445b"
+    },
+    {
+      "ubuntu": "24.04",
+      "codename": "noble",
+      "architecture": "arm64",
+      "filename": "mydumper_1.0.3-1.noble_arm64.deb",
+      "url": "https://github.com/mydumper/mydumper/releases/download/v1.0.3-1/mydumper_1.0.3-1.noble_arm64.deb",
+      "size": 1609756,
+      "sha256": "7b6585df47316e375fee88c115ddbad1d876004fc57a860b6949acbef5a393d6"
+    }
+  ]
+}

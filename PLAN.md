@@ -36,7 +36,7 @@ When zero primary write interruption is required, Porteau recommends and support
 | CLI framework | citty | Commands, options, positional arguments, and help |
 | Interactive prompts | `@clack/prompts` | Guided input, confirmation, cancellation, spinner, progress, and task log |
 | Human logging | consola | Normal, quiet, verbose, and non-interactive output |
-| Configuration | c12 + defu | YAML discovery and layered configuration |
+| Configuration | c12 + Porteau merger | YAML discovery with replacement precedence and Valibot validation |
 | Validation | Valibot | Runtime validation of config, flags, manifests, and normalized events |
 | Structured errors | nostics.dev | Actionable domain errors rendered at the CLI boundary |
 | Backup engine | mydumper/myloader v1 | Pinned, capability-tested external binaries |
@@ -119,7 +119,6 @@ porteau/
 ├── install.sh                       # Generated Ubuntu dependency bootstrap
 ├── package.json
 ├── vite.config.ts
-├── .node-version
 ├── porteau.config.yaml
 ├── src/
 │   ├── cli.ts                       # citty entrypoint and top-level error boundary
@@ -138,7 +137,7 @@ porteau/
 │   │   ├── process.ts               # Child lifecycle, process groups, and signals
 │   │   ├── preflight.ts             # Server, engine, privilege, lock, and capacity checks
 │   │   ├── artifact.ts              # Completion and metadata verification
-│   │   ├── config.ts                # c12 + defu + Valibot
+│   │   ├── config.ts                # c12 + replacement merger + Valibot
 │   │   ├── filters.ts               # Pattern expansion and object-scope resolution
 │   │   ├── credentials.ts           # Temporary protected defaults files
 │   │   └── tools.ts                 # Binary resolution and version checks
@@ -557,7 +556,7 @@ Publish an npm package with:
 }
 ```
 
-Pin the development runtime in `.node-version` and test Node 22.18+ and Node 24 in CI.
+Enforce the minimum runtime through `package.json` and test Node 22.18+ and Node 24 in CI.
 
 ### Standalone executable
 
@@ -866,7 +865,7 @@ Do not claim production safety based only on mocked subprocess tests.
 ### Phase 1 — Verification baseline and contracts
 
 - Scaffold with Vite+.
-- Add `.node-version`, `package.json`, `vite.config.ts`, and npm `bin` metadata.
+- Add `package.json`, `vite.config.ts`, and npm `bin` metadata.
 - Establish `vp check`, `vp test`, and `vp pack` as green baseline commands.
 - Implement citty command skeletons.
 - Define config schema and precedence.
@@ -928,7 +927,7 @@ Do not claim production safety based only on mocked subprocess tests.
 | CLI structure | citty | High |
 | Guided interaction | `@clack/prompts` | High |
 | Human/non-interactive logs | consola | High |
-| Config | YAML + c12 + defu + Valibot | High |
+| Config | YAML + c12 + replacement merger + Valibot | High |
 | Structured errors | nostics.dev | High |
 | Primary engine | Pinned mydumper/myloader v1 | High |
 | Initial engine release | v1.0.3-1 | High |
