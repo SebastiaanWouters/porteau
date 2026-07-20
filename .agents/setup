@@ -1,75 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly NODE_VERSION='22.18.0'
-readonly PNPM_VERSION='11.15.1'
-readonly LOCAL_BIN="${HOME}/.local/bin"
+readonly VP_HOME="${VP_HOME:-${HOME}/.vite-plus}"
+export PATH="${VP_HOME}/bin:${PATH}"
 
-mkdir -p "${LOCAL_BIN}" "${HOME}/.local/share"
-export PATH="${LOCAL_BIN}:${PATH}"
-
-node_is_compatible() {
-  command -v node >/dev/null 2>&1 &&
-    node -e "const [major, minor] = process.versions.node.split('.').map(Number); process.exit(major > 22 || (major === 22 && minor >= 18) ? 0 : 1)"
-}
-
-if ! node_is_compatible; then
-  case "$(uname -m)" in
-    x86_64) node_arch='x64' ;;
-    aarch64 | arm64) node_arch='arm64' ;;
-    *)
-      echo "Unsupported architecture: $(uname -m)" >&2
-      exit 1
-      ;;
-  esac
-
-  node_dir="${HOME}/.local/share/node-v${NODE_VERSION}-linux-${node_arch}"
-  if [[ ! -x "${node_dir}/bin/node" ]]; then
-    echo "Installing Node.js ${NODE_VERSION}..."
-    archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.gz"
-    temp_dir="$(mktemp -d)"
-    trap 'rm -rf "${temp_dir}"' EXIT
-    curl --fail --location --silent --show-error \
-      "https://nodejs.org/dist/v${NODE_VERSION}/${archive}" \
-      --output "${temp_dir}/${archive}"
-    curl --fail --location --silent --show-error \
-      "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" \
-      --output "${temp_dir}/SHASUMS256.txt"
-    (
-      cd "${temp_dir}"
-      grep "  ${archive}$" SHASUMS256.txt | sha256sum --check --strict -
-    )
-    tar -xzf "${temp_dir}/${archive}" -C "${HOME}/.local/share"
-    rm -rf "${temp_dir}"
-    trap - EXIT
-  fi
-  ln -sfn "${node_dir}/bin/node" "${LOCAL_BIN}/node"
-  hash -r
+if ! command -v vp >/dev/null 2>&1; then
+  echo 'Installing Vite+...'
+  curl --fail --location --silent --show-error https://vite.plus |
+    CI=1 VP_NODE_MANAGER=yes bash
 fi
 
-if [[ "$(pnpm --version 2>/dev/null || true)" != "${PNPM_VERSION}" ]]; then
-  case "$(uname -m)" in
-    x86_64) pnpm_arch='x64' ;;
-    aarch64 | arm64) pnpm_arch='arm64' ;;
-    *)
-      echo "Unsupported architecture: $(uname -m)" >&2
-      exit 1
-      ;;
-  esac
+echo 'Installing the Vite+ environment and dependencies...'
+CI=1 vp install --frozen-lockfile
 
-  echo "Installing pnpm ${PNPM_VERSION}..."
-  pnpm_download="$(mktemp)"
-  trap 'rm -f "${pnpm_download}"' EXIT
-  curl --fail --location --silent --show-error \
-    "https://github.com/pnpm/pnpm/releases/download/v${PNPM_VERSION}/pnpm-linux-${pnpm_arch}" \
-    --output "${pnpm_download}"
-  chmod +x "${pnpm_download}"
-  mv "${pnpm_download}" "${LOCAL_BIN}/pnpm"
-  trap - EXIT
-  hash -r
-fi
-
-echo "Installing dependencies from pnpm-lock.yaml..."
-CI=1 pnpm install --frozen-lockfile
-
-echo "Orb setup complete: Node.js $(node --version), pnpm $(pnpm --version)."
+echo 'Orb setup complete.'
