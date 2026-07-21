@@ -6,13 +6,13 @@ import mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it } from 'vite-plus/test'
 import { runBackup } from '../../src/core/backup.js'
 import { defaultConfig, type PorteauConfig } from '../../src/core/config.js'
+import { runRestore } from '../../src/core/restore.js'
 
 const enabled = process.env.PORTEAU_MYSQL_INTEGRATION === '1'
 const host = process.env.MYSQL_HOST ?? 'mysql'
 const password = process.env.MYSQL_PWD ?? ''
 const root = join(tmpdir(), `porteau-mysql-qualification-${process.pid}`)
 const suite = enabled ? describe : describe.skip
-const loaderConnection = ['-h', host, '-u', 'root']
 
 function config(database: string, output: string): PorteauConfig {
   return {
@@ -63,10 +63,12 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('backs up through Porteau under writes, applies filters, and restores with pinned myloader', async () => {
+  it('round-trips through guarded Porteau backup and restore under writes', async () => {
     const output = join(root, 'consistent')
     const events: string[] = []
     const writer = await mysql.createConnection({ host, user: 'root', password, ssl: {} })
+    const [initial] = await writer.query('SELECT COUNT(*) count FROM safe_app.rows')
+    const initialRows = Number((initial as { count: number }[])[0]!.count)
     let writing = true
     let writes = 0
     const writeLoop = (async () => {
@@ -104,18 +106,52 @@ suite('Porteau against pinned MySQL and mydumper', () => {
         'dump_phase/wait_database_finish/progress',
       ]),
     )
-    const load = spawnSync(
-      'myloader',
-      [...loaderConnection, `--directory=${output}`, '--source-db=safe_app', '--database=restored'],
-      { encoding: 'utf8', env: { ...process.env, MYSQL_PWD: password } },
+    const restoreEvents: string[] = []
+    await expect(
+      runRestore({
+        config: backupConfig,
+        request: {
+          artifactPath: output,
+          sourceDatabase: 'safe_app',
+          destinationDatabase: 'restored',
+          destinationPolicy: 'require-empty',
+          overwritePolicy: 'reject',
+          binlogPolicy: 'disable',
+        },
+        confirm: () => true,
+        onEvent(event) {
+          restoreEvents.push(`${event.sourceEvent}/${event.sourcePhase}/${event.sourceStatus}`)
+        },
+      }),
+    ).resolves.toEqual({ destinationDatabase: 'restored', warnings: expect.any(Number) })
+    expect(restoreEvents).toEqual(
+      expect.arrayContaining(['restore_completed/restore_finish/finished']),
     )
-    expect(load.status, load.stderr).toBe(0)
     const verify = await mysql.createConnection({ host, user: 'root', password, ssl: {} })
+    const [sourceRows] = await verify.query('SELECT COUNT(*) count FROM safe_app.rows')
     const [rows] = await verify.query('SELECT COUNT(*) count FROM restored.rows')
     const [omitted] = await verify.query('SELECT COUNT(*) count FROM restored.omitted')
     await verify.end()
-    expect(Number((rows as { count: number }[])[0]!.count)).toBeGreaterThan(0)
+    const restoredRows = Number((rows as { count: number }[])[0]!.count)
+    const finalSourceRows = Number((sourceRows as { count: number }[])[0]!.count)
+    expect(restoredRows).toBeGreaterThanOrEqual(initialRows)
+    expect(restoredRows).toBeLessThanOrEqual(finalSourceRows)
     expect(Number((omitted as { count: number }[])[0]!.count)).toBe(0)
+
+    await expect(
+      runRestore({
+        config: backupConfig,
+        request: {
+          artifactPath: output,
+          sourceDatabase: 'safe_app',
+          destinationDatabase: 'restored',
+          destinationPolicy: 'require-empty',
+          overwritePolicy: 'reject',
+          binlogPolicy: 'disable',
+        },
+        confirm: () => true,
+      }),
+    ).rejects.toThrow(/not empty/u)
   }, 90_000)
 
   it('rejects a selected nontransactional table before creating output', async () => {

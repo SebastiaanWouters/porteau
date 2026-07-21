@@ -13,6 +13,7 @@ import { restoreCommand } from './commands/restore.js'
 import { setupCommand } from './commands/setup.js'
 import { runBackup } from './core/backup.js'
 import { defaultConfig, loadConfig, validateConfig, type PorteauConfig } from './core/config.js'
+import { runRestore, type RestoreConfirmation } from './core/restore.js'
 import {
   approvedInstall,
   executeInstallPlan,
@@ -57,7 +58,7 @@ async function usage(name?: string): Promise<string> {
             : name === 'config'
               ? renderUsage(configCommand, parent)
               : renderUsage(mainCommand))
-  return `${rendered}\nGLOBAL OPTIONS\n  --json  JSONL output\n  --quiet  Essential output only\n  --verbose  Detailed output\n  --no-interactive  Never prompt\n  --yes  Approve setup mutation`
+  return `${rendered}\nGLOBAL OPTIONS\n  --json  JSONL output\n  --quiet  Essential output only\n  --verbose  Detailed output\n  --no-interactive  Never prompt\n  --yes  Approve setup or restore mutation`
 }
 export interface CliExecutionOptions {
   args?: string[]
@@ -75,12 +76,14 @@ export interface CliExecutionOptions {
 export interface CliServices {
   loadConfig: typeof loadConfig
   runBackup: typeof runBackup
+  runRestore: typeof runRestore
   collectDiagnostics: typeof collectDiagnostics
   executeInstallPlan: typeof executeInstallPlan
 }
 const defaultServices: CliServices = {
   loadConfig,
   runBackup,
+  runRestore,
   collectDiagnostics,
   executeInstallPlan,
 }
@@ -272,6 +275,16 @@ function initialYaml(host: string, port: number, user: string | undefined, datab
   ].join('\n')
 }
 
+function restoreSummary(summary: RestoreConfirmation): string {
+  return [
+    `Restore ${summary.sourceDatabase} to ${summary.host}:${summary.port}/${summary.destinationDatabase}`,
+    `Destination: ${summary.destinationExists ? 'exists' : 'will be created'} (${summary.destinationObjects} objects)`,
+    `Destination policy: ${summary.destinationPolicy}`,
+    `Overwrite policy: ${summary.overwritePolicy}`,
+    `Binary log policy: ${summary.binlogPolicy}`,
+  ].join('\n')
+}
+
 async function writeConfigAtomic(
   path: string,
   contents: string,
@@ -382,7 +395,6 @@ export async function executeCli(options: CliExecutionOptions = {}): Promise<num
       await presentation.success(name ?? 'porteau', rendered, { help: rendered })
       return controller.signal.aborted ? 130 : 0
     }
-    if (name === 'restore') throw new UsageError('Restore is not available in this release')
     const a = parsed.values
     if (name === 'config') {
       const config = await services.loadConfig({
@@ -512,6 +524,117 @@ export async function executeCli(options: CliExecutionOptions = {}): Promise<num
         throw error
       }
       await presentation.success(name, `Created ${output}`, { path: output })
+      return 0
+    }
+    if (name === 'restore') {
+      const configFile = a.config ? resolve(cwd, String(a.config)) : undefined
+      const restoreFlags = {
+        ...(a['destination-policy'] ? { destinationPolicy: String(a['destination-policy']) } : {}),
+        ...(a['overwrite-policy'] ? { overwritePolicy: String(a['overwrite-policy']) } : {}),
+        ...(a['binlog-policy'] ? { binlogPolicy: String(a['binlog-policy']) } : {}),
+      }
+      let config = await services.loadConfig({
+        cwd,
+        env,
+        ...(configFile ? { configFile } : {}),
+        flags: {
+          ...(a.user ? { connection: { user: String(a.user) } } : {}),
+          ...(Object.keys(restoreFlags).length ? { restore: restoreFlags } : {}),
+        },
+      })
+      controller.signal.throwIfAborted()
+      presentation.registerSecret(config.connection.password)
+      let user = config.connection.user,
+        password = config.connection.password,
+        artifact = a.artifact ? String(a.artifact) : undefined,
+        sourceDatabase = a['source-database'] ? String(a['source-database']) : undefined,
+        destinationDatabase = a['destination-database']
+          ? String(a['destination-database'])
+          : undefined
+      if (user !== undefined) user = normalizeRequired(user, 'Destination database user')
+      if (presentation.interactive) {
+        if (!user) {
+          user = await prompts.text('Destination database user', controller.signal)
+          controller.signal.throwIfAborted()
+          if (user === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
+          user = normalizeRequired(user, 'Destination database user')
+        }
+        if (password === undefined) {
+          password = await prompts.password('Destination database password', controller.signal)
+          controller.signal.throwIfAborted()
+          if (password === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
+          presentation.registerSecret(password)
+        }
+        if (!artifact) {
+          artifact = await prompts.text('Backup artifact directory', controller.signal)
+          controller.signal.throwIfAborted()
+          if (artifact === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
+        }
+        if (!sourceDatabase) {
+          sourceDatabase = await prompts.text('Source database in artifact', controller.signal)
+          controller.signal.throwIfAborted()
+          if (sourceDatabase === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
+        }
+        if (!destinationDatabase) {
+          destinationDatabase = await prompts.text('Destination database', controller.signal)
+          controller.signal.throwIfAborted()
+          if (destinationDatabase === undefined)
+            throw Object.assign(new Error(), { name: 'AbortError' })
+        }
+      }
+      if (!user || password === undefined || !artifact || !sourceDatabase || !destinationDatabase)
+        throw new Error(
+          'Restore requires an artifact, source database, destination database, database user, and password',
+        )
+      artifact = normalizeRequired(artifact, 'Backup artifact directory')
+      sourceDatabase = normalizeRequired(sourceDatabase, 'Source database')
+      destinationDatabase = normalizeRequired(destinationDatabase, 'Destination database')
+      config = await services.loadConfig({
+        cwd,
+        env,
+        ...(configFile ? { configFile } : {}),
+        flags: {
+          connection: { user, password },
+          ...(Object.keys(restoreFlags).length ? { restore: restoreFlags } : {}),
+        },
+      })
+      controller.signal.throwIfAborted()
+      presentation.registerSecret(config.connection.password)
+      const result = await services.runRestore({
+        config,
+        request: {
+          artifactPath: resolve(cwd, artifact),
+          sourceDatabase,
+          destinationDatabase,
+          destinationPolicy: config.restore.destinationPolicy,
+          overwritePolicy: config.restore.overwritePolicy,
+          binlogPolicy: config.restore.binlogPolicy,
+        },
+        configDirectory: configFile ? dirname(configFile) : cwd,
+        signal: controller.signal,
+        environment: env,
+        onEvent: (event) => presentation.progress(name, event),
+        async confirm(summary) {
+          const rendered = restoreSummary(summary)
+          await presentation.disclose(name, rendered, { summary })
+          controller.signal.throwIfAborted()
+          if (parsed.flags.yes) return true
+          if (!presentation.interactive)
+            throw new Error('Restore requires --yes in non-interactive mode')
+          const answer = await prompts.confirm('Apply this restore plan?', controller.signal)
+          controller.signal.throwIfAborted()
+          if (answer !== true)
+            throw Object.assign(new Error('Restore cancelled before destination mutation'), {
+              name: 'AbortError',
+            })
+          return true
+        },
+      })
+      controller.signal.throwIfAborted()
+      await presentation.success(name, `Restore completed: ${result.destinationDatabase}`, {
+        destinationDatabase: result.destinationDatabase,
+        warnings: result.warnings,
+      })
       return 0
     }
     const configFile = a.config ? resolve(cwd, String(a.config)) : undefined

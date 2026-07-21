@@ -39,6 +39,24 @@ describe('CLI contract', () => {
     expect(setupOutput.join('\n')).toContain('--check')
   })
 
+  it('documents guarded restore inputs and approval', async () => {
+    const output: string[] = []
+    expect(
+      await executeCli({ args: ['restore', '--help'], stdout: (line) => output.push(line) }),
+    ).toBe(0)
+    const help = output.join('\n')
+    for (const option of [
+      '--artifact',
+      '--source-database',
+      '--destination-database',
+      '--destination-policy',
+      '--overwrite-policy',
+      '--binlog-policy',
+      '--yes',
+    ])
+      expect(help).toContain(option)
+  })
+
   it('returns 130 when SIGINT interrupts help rendering', async () => {
     expect(
       await executeCli({

@@ -220,7 +220,7 @@ export class Presentation {
         command,
         event: { type: 'plan', message, data },
       })
-    else await this.#writeLines('stderr', message)
+    else await this.#writeLines(this.interactive ? 'stdout' : 'stderr', message)
   }
 
   async reportDiagnostics(command: string, message: string, data: unknown): Promise<void> {

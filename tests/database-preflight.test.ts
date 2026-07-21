@@ -218,6 +218,23 @@ describe('read-only backup preflight', () => {
     ).resolves.toHaveProperty('report.tables')
   })
 
+  it.each(['SELECT', 'SHOW VIEW', 'TRIGGER'])(
+    'subtracts a database-scoped partial revoke of %s from global backup privileges',
+    async (privilege) => {
+      await expect(
+        preflight({
+          grants: [
+            {
+              grant:
+                'GRANT SELECT, RELOAD, PROCESS, BACKUP_ADMIN, SHOW VIEW, TRIGGER ON *.* TO user',
+            },
+            { grant: `REVOKE ${privilege} ON \`app\`.* FROM user` },
+          ],
+        }),
+      ).rejects.toThrow(/safe lock strategy/u)
+    },
+  )
+
   it('requires data privileges across every selected database', async () => {
     const state = fake({
       databases: [{ databaseName: 'app' }, { databaseName: 'audit' }],
@@ -433,6 +450,39 @@ describe('destination restore preflight', () => {
         connectionFactory: async () => wholeDatabase.connection,
       }),
     ).resolves.toMatchObject({ destination: { objects: 0 } })
+  })
+
+  it('accepts the qualified MySQL 8.4 expanded global grant and rejects partial revokes', async () => {
+    const expanded =
+      'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION'
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () =>
+          destination(0, true, { grants: [{ grant: expanded }] }).connection,
+      }),
+    ).resolves.toMatchObject({ destination: { objects: 0 } })
+
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () =>
+          destination(0, true, {
+            grants: [
+              { grant: expanded },
+              { grant: 'REVOKE SELECT ON `restored`.* FROM `root`@`localhost`' },
+            ],
+          }).connection,
+      }),
+    ).rejects.toThrow(/catalog visibility/u)
   })
 
   it.each(['mysql', 'information_schema', 'performance_schema', 'sys'])(

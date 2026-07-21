@@ -107,20 +107,55 @@ function productOf(version: string, comment: string): ServerProduct {
 interface Grant {
   readonly privileges: ReadonlySet<string>
   readonly database?: string
+  readonly revoked?: boolean
 }
+const mysql84AllStaticPrivileges = new Set([
+  'SELECT',
+  'INSERT',
+  'UPDATE',
+  'DELETE',
+  'CREATE',
+  'DROP',
+  'RELOAD',
+  'SHUTDOWN',
+  'PROCESS',
+  'FILE',
+  'REFERENCES',
+  'INDEX',
+  'ALTER',
+  'SHOW DATABASES',
+  'SUPER',
+  'CREATE TEMPORARY TABLES',
+  'LOCK TABLES',
+  'EXECUTE',
+  'REPLICATION SLAVE',
+  'REPLICATION CLIENT',
+  'CREATE VIEW',
+  'SHOW VIEW',
+  'CREATE ROUTINE',
+  'ALTER ROUTINE',
+  'CREATE USER',
+  'EVENT',
+  'TRIGGER',
+  'CREATE TABLESPACE',
+  'CREATE ROLE',
+  'DROP ROLE',
+])
 function parseGrants(rows: readonly unknown[]): Grant[] {
   const grants: Grant[] = []
   for (const row of rows) {
     for (const value of Object.values(row as Row)) {
       if (typeof value !== 'string') continue
-      const match = /^GRANT\s+(.+?)\s+ON\s+(\*\.\*|`(?:``|[^`])+`\.\*)\s+TO\s+/iu.exec(value)
+      const match =
+        /^(GRANT|REVOKE)\s+(.+?)\s+ON\s+(\*\.\*|`(?:``|[^`])+`\.\*)\s+(?:TO|FROM)\s+/iu.exec(value)
       if (!match) continue
-      const privileges = match[1]!.split(',').map((item) => item.trim().toUpperCase())
+      const privileges = match[2]!.split(',').map((item) => item.trim().toUpperCase())
       if (privileges.some((item) => !/^[A-Z_]+(?: [A-Z_]+)*$/u.test(item))) continue
-      const scope = match[2]!
+      const scope = match[3]!
       grants.push({
         privileges: new Set(privileges),
         ...(scope === '*.*' ? {} : { database: scope.slice(1, -3).replaceAll('``', '`') }),
+        ...(match[1]!.toUpperCase() === 'REVOKE' ? { revoked: true } : {}),
       })
     }
   }
@@ -128,9 +163,13 @@ function parseGrants(rows: readonly unknown[]): Grant[] {
 }
 
 function hasCompleteDatabaseVisibility(grants: readonly Grant[], database: string): boolean {
+  if (grants.some((grant) => grant.revoked && grant.database === database)) return false
   return grants.some(
     (grant) =>
-      grant.privileges.has('ALL PRIVILEGES') &&
+      !grant.revoked &&
+      (grant.privileges.has('ALL PRIVILEGES') ||
+        (grant.database === undefined &&
+          [...mysql84AllStaticPrivileges].every((privilege) => grant.privileges.has(privilege)))) &&
       (grant.database === undefined || grant.database === database),
   )
 }
@@ -196,12 +235,25 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
 
     const grantRows = await query('SHOW GRANTS')
     const grants = parseGrants(grantRows)
-    const has = (privilege: string, database?: string) =>
-      grants.some(
-        (grant) =>
-          (grant.database === undefined || grant.database === database) &&
-          (grant.privileges.has(privilege) || grant.privileges.has('ALL PRIVILEGES')),
+    const has = (privilege: string, database?: string) => {
+      const restricted =
+        database !== undefined &&
+        grants.some(
+          (grant) =>
+            grant.revoked &&
+            grant.database === database &&
+            (grant.privileges.has(privilege) || grant.privileges.has('ALL PRIVILEGES')),
+        )
+      return (
+        !restricted &&
+        grants.some(
+          (grant) =>
+            !grant.revoked &&
+            (grant.database === undefined || grant.database === database) &&
+            (grant.privileges.has(privilege) || grant.privileges.has('ALL PRIVILEGES')),
+        )
       )
+    }
     const globalRequired =
       product === 'mysql' ? ['RELOAD', 'PROCESS', 'BACKUP_ADMIN'] : ['RELOAD', 'PROCESS']
     if (profile === 'replica') globalRequired.push('REPLICATION CLIENT')
@@ -218,7 +270,11 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
     ]
     if (absent.length > 0)
       throw new Error(`Insufficient privileges for safe lock strategy: ${absent.join(', ')}`)
-    const privileges = [...new Set(grants.flatMap((grant) => [...grant.privileges]))]
+    const privileges = [
+      ...new Set(
+        grants.filter((grant) => !grant.revoked).flatMap((grant) => [...grant.privileges]),
+      ),
+    ]
     const variablesRow = first(
       await query(product === 'mysql' ? MYSQL_VARIABLES_SQL : MARIADB_VARIABLES_SQL),
     )

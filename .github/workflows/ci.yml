@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.18.0', '24']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: ${{ matrix.node }}
+          cache: true
+          run-install: false
+      - run: vp install --frozen-lockfile
+      - run: vp check
+      - run: vp test
+      - run: vp pack
+      - name: Smoke-test npm package contents and clean install
+        run: vp run package:smoke
+
+  mysql-integration:
+    name: MySQL 8.4 guarded round trip
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run isolated integration harness
+        run: docker compose -f tests/integration/compose.yaml up --build --abort-on-container-exit --exit-code-from qualification
+      - name: Remove integration services and volumes
+        if: always()
+        run: docker compose -f tests/integration/compose.yaml down -v
