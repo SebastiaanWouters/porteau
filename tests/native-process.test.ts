@@ -42,6 +42,33 @@ describe('machine JSONL', () => {
     },
   )
 
+  it('normalizes qualified myloader restore and checksum events into Porteau phases', () => {
+    const events: unknown[] = []
+    const parser = new MachineLogParser('myloader', (event) => events.push(event))
+    parser.write(
+      readFileSync(
+        fileURLToPath(new URL('./fixtures/native/myloader-success.jsonl', import.meta.url)),
+      ),
+    )
+    parser.end()
+    expect(events).toMatchObject([
+      { type: 'status', phase: 'startup', tool: 'myloader', sourceEvent: 'process_config' },
+      {
+        type: 'status',
+        phase: 'verification',
+        database: 'restored',
+        sourceEvent: 'checksum_check',
+      },
+      {
+        type: 'completion',
+        phase: 'restore',
+        exitCode: 0,
+        errors: '0',
+        files: '10',
+      },
+    ])
+  })
+
   it('parses chunk boundaries and CRLF and permits additive fields', () => {
     const events: unknown[] = []
     const parser = new MachineLogParser('mydumper', (event) => events.push(event))

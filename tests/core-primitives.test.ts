@@ -2,7 +2,11 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from '
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vite-plus/test'
-import { validateArtifact, verifyMydumperArtifact } from '../src/core/artifact.js'
+import {
+  validateArtifact,
+  verifyMydumperArtifact,
+  verifyRestoreArtifact,
+} from '../src/core/artifact.js'
 import { createCredentialsDefaultsFile, escapeDefaultsValue } from '../src/core/credentials.js'
 import {
   assertArtifactSafeIdentifiers,
@@ -205,5 +209,51 @@ describe('artifact validation', () => {
     await expect(
       verifyMydumperArtifact(root, [table], { triggers: false, expectedFiles: 99 }),
     ).rejects.toThrow(/file count disagrees/)
+  })
+
+  it('uses metadata as restore object proof and rejects artifact-controlled binlogging', async () => {
+    const root = await temporaryDirectory('porteau-restore-artifact-')
+    await writeFile(join(root, 'metadata'), '[`app`.`empty_data_only`]\nrows = 0\n')
+    await writeFile(join(root, 'app-schema-create.sql'), '')
+    await expect(verifyRestoreArtifact(root, 'app')).resolves.toMatchObject({
+      rootPath: root,
+      files: expect.arrayContaining(['metadata', 'app-schema-create.sql']),
+    })
+
+    await writeFile(
+      join(root, 'metadata'),
+      '[myloader_session_variables]\nSQL_LOG_BIN = 1\n[`app`.`users`]\nrows = 0\n',
+    )
+    await expect(verifyRestoreArtifact(root, 'app')).rejects.toThrow(/binlog policy/u)
+    await writeFile(join(root, 'metadata'), '[`other`.`users`]\nrows = 0\n')
+    await expect(verifyRestoreArtifact(root, 'app')).rejects.toThrow(/no restorable objects/u)
+  })
+
+  it('rejects loader control files and missing nonempty data chunks', async () => {
+    for (const controlFile of [
+      'metadata.header',
+      'metadata.partial.0',
+      'mydumper_other.users.00000.sql',
+    ]) {
+      const root = await temporaryDirectory('porteau-restore-control-')
+      await writeFile(join(root, 'metadata'), '[`app`.`users`]\nrows = 0\n')
+      await writeFile(join(root, 'app-schema-create.sql'), '')
+      await writeFile(join(root, controlFile), '')
+      await expect(verifyRestoreArtifact(root, 'app')).rejects.toThrow(/control file/u)
+    }
+
+    const incomplete = await temporaryDirectory('porteau-restore-incomplete-')
+    await writeFile(join(incomplete, 'metadata'), '[`app`.`users`]\nrows = 1\n')
+    await writeFile(join(incomplete, 'app-schema-create.sql'), '')
+    await writeFile(join(incomplete, 'app.users-schema.sql'), '')
+    await expect(verifyRestoreArtifact(incomplete, 'app')).rejects.toThrow(/missing data/u)
+
+    const duplicate = await temporaryDirectory('porteau-restore-duplicate-')
+    await writeFile(
+      join(duplicate, 'metadata'),
+      '[`app`.`users`]\nrows = 0\n[`app`.`users`]\nrows = 1\n',
+    )
+    await writeFile(join(duplicate, 'app-schema-create.sql'), '')
+    await expect(verifyRestoreArtifact(duplicate, 'app')).rejects.toThrow(/duplicate object/u)
   })
 })

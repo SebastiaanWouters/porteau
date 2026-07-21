@@ -129,7 +129,7 @@ porteau/
 │   ├── cli.ts                       # citty metadata and CLI-owned runtime/error boundary
 │   ├── commands/
 │   │   ├── backup.ts                # Backup command metadata; guided orchestration is CLI-owned
-│   │   ├── restore.ts               # Command skeleton; destination mutation waits for Phase 5
+│   │   ├── restore.ts               # Command skeleton; destination mutation remains disabled
 │   │   ├── init.ts                  # Guided, create-exclusive YAML configuration metadata
 │   │   ├── setup.ts                 # Read-only checks, plan rendering, and approved Ubuntu setup
 │   │   ├── doctor.ts                # Read-only dependency diagnostics (implemented)
@@ -138,7 +138,7 @@ porteau/
 │   │   ├── engine.ts                # Narrow engine capabilities and request types
 │   │   ├── backup.ts                # Safe backup orchestration and atomic publication
 │   │   ├── mydumper.ts              # Shared mydumper/myloader event parser and runner
-│   │   ├── myloader.ts              # Restore adapter (planned Phase 5)
+│   │   ├── restore.ts               # Guarded restore orchestration and approval boundary
 │   │   ├── events.ts                # Porteau-owned normalized event schema
 │   │   ├── process.ts               # Child lifecycle, process groups, and signals
 │   │   ├── database.ts              # mysql2 connection, deadlines, TLS, and error sanitization
@@ -819,7 +819,7 @@ Development must not require running `install.sh` against the host. Installer un
 
 ## 16. Test strategy
 
-Tests are added with the phase that introduces the behavior. Phase 2 turned the initial subprocess convention into reusable fixture executables and pinned observed native machine-log fixtures. The default Vitest run currently has 115 passing tests and three skipped opt-in MySQL tests. Deterministic tests use injected MySQL protocol connections and subprocess fixtures. Phase 3 also committed host-guarded installer and real-MySQL Docker/Compose harnesses; they require an external Docker runner and have not been executed in the current orb. Phase 4 adds presentation-context and command-level guided-flow coverage. No later phase should replace or weaken an earlier safety gate.
+Tests are added with the phase that introduces the behavior. Phase 2 turned the initial subprocess convention into reusable fixture executables and pinned observed native machine-log fixtures. The default Vitest run currently has 145 passing tests and three skipped opt-in MySQL tests. Deterministic tests use injected MySQL protocol connections and subprocess fixtures. Phase 3 also committed host-guarded installer and real-MySQL Docker/Compose harnesses; they require an external Docker runner and have not been executed in the current orb. Phase 4 added presentation-context and command-level guided-flow coverage. Phase 5 now adds guarded restore artifact, destination-preflight, policy, process-agreement, cancellation, and cleanup coverage. No later phase should replace or weaken an earlier safety gate.
 
 ### Unit tests
 
@@ -939,7 +939,7 @@ Do not import Clack or consola into `src/core` or `src/setup`. Do not make backu
 | Phase 2 — safe backup integration | Complete | None; broader qualification items are tracked in Section 16 |
 | Phase 3 — diagnostics and setup | Implementation complete | None; run the committed Ubuntu installer matrix and MySQL harness on suitable external Docker runners |
 | Phase 4 — presentation and guided flows | Complete | None within its implemented command and output boundary |
-| Phase 5 — guarded restore and release | **Not implemented** | Entire phase described below |
+| Phase 5 — guarded restore and release | **In progress** | Restore safety foundation complete; pinned mutation qualification, CLI, round trips, and release work remain |
 
 There is no Phase 6 in this plan. Phase 5 is the only phase still requiring product implementation.
 
@@ -1005,13 +1005,19 @@ The generator must consume validated canonical data, but the committed `install.
 
 **Exit gate:** every interactive input has a flag/config/environment equivalent, `--json` and non-TTY modes never prompt or animate, errors render once with stable exit codes, setup uses the Phase 3 approval boundary, and presentation imports do not cross into core/setup.
 
-Completed on 2026-07-21 with a single CLI-owned abort/signal and injected-I/O presentation boundary. Human and versioned JSONL modes cover backup, setup, doctor, init, and read-only config; restore remains Phase 5. Setup always discloses the complete mutation plan before crossing the existing typed approval boundary. Guided backup prompts only for missing user, password, and database values, and passwords remain unavailable on argv. The current unit suite has 115 passing tests (plus 3 skipped integration tests). External Ubuntu architecture/Node and Docker qualification matrices remain pending.
+Completed on 2026-07-21 with a single CLI-owned abort/signal and injected-I/O presentation boundary. Human and versioned JSONL modes cover backup, setup, doctor, init, and read-only config; restore remains Phase 5. Setup always discloses the complete mutation plan before crossing the existing typed approval boundary. Guided backup prompts only for missing user, password, and database values, and passwords remain unavailable on argv. At Phase 4 completion, the unit suite had 115 passing tests plus 3 skipped integration tests. External Ubuntu architecture/Node and Docker qualification matrices remain pending.
 
-### Phase 5 — Guarded restore, operational verification, and release packaging (not implemented)
+### Phase 5 — Guarded restore, operational verification, and release packaging (in progress)
 
-- Implement myloader native-event mapping from the Phase 2-qualified fixture corpus, revalidate it in pinned-binary integration tests, and qualify destination mutation behavior before exposing restore. Extend the existing parser/event system rather than creating a second one.
-- Extend `RestoreRequest` from proven requirements and implement destination preflight through the shared direct-protocol connection layer.
-- Complete guarded myloader flows with `require-empty` as the default, explicit destination/binlog/overwrite policies, process-group cancellation, and the same process/event/artifact agreement used by backup.
+Completed restore safety foundation:
+
+- The shared parser explicitly normalizes the qualified myloader success, checksum, failure, cancellation, and completion contract; pinned-binary integration revalidation remains required before CLI exposure.
+- `RestoreRequest` carries explicit source, destination, existing-object, overwrite, and binlog policies. Destination preflight uses the shared direct-protocol connection layer, fails closed without complete catalog visibility, and capability-tests session binlog behavior.
+- The guarded restore orchestrator verifies artifact structure before connecting, rejects native loader-control bypasses and incomplete nonzero data, confirms the complete mutation policy before native execution or credential creation, uses protected temporary credentials, preserves process-group cancellation, and requires process/event completion agreement.
+
+Remaining Phase 5 implementation:
+
+- Revalidate myloader events and destination mutation behavior against the pinned binaries before exposing restore.
 - Add disposable restore verification and real dump/restore round trips. Keep full data checksums opt-in and distinguish “backup artifact valid” from “restore operationally verified.”
 - Add npm publishing and installation smoke tests.
 - Write paired interactive and automation documentation.
@@ -1019,6 +1025,8 @@ Completed on 2026-07-21 with a single CLI-owned abort/signal and injected-I/O pr
 - Add supported Node/MySQL CI matrix.
 - Evaluate, but do not depend on, a standalone executable built with Node 26.
 - Consider a MySQL Shell backend only as a separate evidence-driven roadmap item.
+
+The restore safety foundation was completed on 2026-07-21 without exposing destination mutation through the CLI. The current default suite has 145 passing tests and 3 skipped opt-in MySQL integration tests; `vp check`, `vp test`, and `vp pack` pass. The skipped pinned-binary destination qualification, operational CLI, disposable round trips, packaging smoke tests, supported matrices, and documentation remain outstanding and are required before the Phase 5 exit gate can pass.
 
 **Exit gate:** destructive destination behavior is impossible without explicit policy and confirmation, round-trip tests pass on the supported matrix, npm pack/install invokes `dist/cli.mjs`, documentation matches both human and JSON modes, and release artifacts contain no credentials or temporary data.
 
@@ -1052,4 +1060,4 @@ Completed on 2026-07-21 with a single CLI-owned abort/signal and injected-I/O pr
 | Standalone packaging | Experimental secondary artifact later | Medium |
 | Full-screen terminal UI | None | High |
 
-Phases 1, 2, and 4 are complete within their qualified boundaries in Sections 17 and 18. Phase 3 implementation is complete; its installer and MySQL qualification matrices are committed but still need execution on suitable external Docker runners. Phase 5 is the only phase still requiring product implementation and adds guarded restore plus release packaging. Future work must preserve the existing safety, compatibility, event, artifact, installer, presentation, and public JSON contracts while correcting assumptions whenever qualification against pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.
+Phases 1, 2, and 4 are complete within their qualified boundaries in Sections 17 and 18. Phase 3 implementation is complete; its installer and MySQL qualification matrices are committed but still need execution on suitable external Docker runners. Phase 5 has completed its guarded restore safety foundation but still requires pinned destination qualification, CLI exposure, operational round trips, release packaging, matrices, and documentation. Future work must preserve the existing safety, compatibility, event, artifact, installer, presentation, and public JSON contracts while correcting assumptions whenever qualification against pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.

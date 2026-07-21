@@ -7,6 +7,8 @@ const mode = process.argv[2] ?? '0'
 
 const toolName = basename(process.argv[1])
 if (['mydumper', 'myloader'].includes(toolName) && process.argv.includes('--version')) {
+  if (process.env.PORTEAU_FIXTURE_VERSION_INVOCATION)
+    await writeFile(`${process.env.PORTEAU_FIXTURE_VERSION_INVOCATION}-${toolName}`, 'version')
   process.stdout.write(`${toolName} v1.0.3-1, built against MySQL 8.0.46 with SSL support\n`)
   process.exit(0)
 }
@@ -71,6 +73,70 @@ if (toolName === 'mydumper') {
     )
     process.exit(0)
   }
+}
+
+if (toolName === 'myloader') {
+  const base = {
+    schema_version: '1',
+    event_version: '1',
+    run_id: 'restore-fixture',
+    ts: '2026-07-20 12:34:56.123456',
+    level: 'INFO',
+    tool: 'myloader',
+    message: 'fixture',
+    fatal: false,
+  }
+  if (process.env.PORTEAU_FIXTURE_INVOCATION)
+    await writeFile(process.env.PORTEAU_FIXTURE_INVOCATION, JSON.stringify(process.argv.slice(2)))
+  process.stderr.write(
+    `${JSON.stringify({ ...base, seq: 1, event: 'process_config', phase: 'startup', status: 'started' })}\n`,
+  )
+  if (process.env.PORTEAU_FIXTURE_RESTORE_HANG === '1') {
+    setInterval(() => {}, 1_000)
+  } else if (process.env.PORTEAU_FIXTURE_RESTORE_CANCELLED === '1') {
+    process.stderr.write(
+      `${JSON.stringify({ ...base, seq: 2, event: 'restore_cancelled', phase: 'cleanup', status: 'cancelled' })}\n`,
+    )
+  } else if (process.env.PORTEAU_FIXTURE_RESTORE_FATAL === '1') {
+    process.stderr.write(
+      `${JSON.stringify({ ...base, seq: 2, event: 'process_error', phase: 'runtime', status: 'failed', fatal: true })}\n`,
+    )
+  } else if (process.env.PORTEAU_FIXTURE_RESTORE_NO_COMPLETION !== '1') {
+    const exitCode = process.env.PORTEAU_FIXTURE_RESTORE_EVENT_EXIT ?? '0'
+    process.stderr.write(
+      `${JSON.stringify({
+        ...base,
+        seq: 2,
+        event: 'restore_completed',
+        phase: 'restore_finish',
+        status: 'finished',
+        errors: process.env.PORTEAU_FIXTURE_RESTORE_ERRORS ?? '0',
+        warnings: '0',
+        retries: '0',
+        files: '4',
+        exit_code: exitCode,
+        duration_ms: '1',
+      })}\n`,
+    )
+    if (process.env.PORTEAU_FIXTURE_RESTORE_DUPLICATE_COMPLETION === '1')
+      process.stderr.write(
+        `${JSON.stringify({
+          ...base,
+          seq: 3,
+          event: 'restore_completed',
+          phase: 'restore_finish',
+          status: 'finished',
+          errors: '0',
+          warnings: '0',
+          retries: '0',
+          files: '4',
+          exit_code: exitCode,
+          duration_ms: '1',
+        })}\n`,
+      )
+    process.exitCode = Number(process.env.PORTEAU_FIXTURE_RESTORE_PROCESS_EXIT ?? '0')
+  }
+  if (process.env.PORTEAU_FIXTURE_RESTORE_HANG !== '1') process.exit(process.exitCode ?? 0)
 }
 
 if (mode !== '0' && Number.isNaN(Number.parseInt(mode, 10))) {

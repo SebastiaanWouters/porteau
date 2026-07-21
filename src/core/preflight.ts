@@ -48,6 +48,27 @@ export interface PreflightRequest {
   readonly connectionFactory?: ConnectionFactory
 }
 
+export interface RestorePreflightRequest {
+  readonly config: PorteauConfig
+  readonly destinationDatabase: string
+  readonly destinationPolicy: 'require-empty' | 'allow-existing'
+  readonly overwritePolicy: 'reject' | 'drop' | 'truncate' | 'delete'
+  readonly binlogPolicy: 'disable' | 'enable'
+  readonly timeoutMilliseconds?: number
+  readonly signal?: AbortSignal
+  readonly connectionFactory?: ConnectionFactory
+}
+
+export interface RestorePreflightReport {
+  readonly server: { readonly product: ServerProduct; readonly version: string }
+  readonly destination: {
+    readonly database: string
+    readonly exists: boolean
+    readonly objects: number
+  }
+  readonly logBin: boolean
+}
+
 const SERVER_SQL = 'SELECT @@version AS version, @@version_comment AS versionComment'
 const DATABASE_SQL =
   'SELECT SCHEMA_NAME AS databaseName FROM information_schema.SCHEMATA WHERE SCHEMA_NAME IN (?)'
@@ -60,6 +81,13 @@ const TABLE_SQL = `SELECT t.TABLE_SCHEMA AS databaseName, t.TABLE_NAME AS tableN
 const MYSQL_VARIABLES_SQL = 'SELECT @@global.gtid_mode AS gtidMode, @@global.log_bin AS logBin'
 const MARIADB_VARIABLES_SQL =
   'SELECT @@global.gtid_binlog_pos AS gtidMode, @@global.log_bin AS logBin'
+const DESTINATION_SQL =
+  'SELECT SCHEMA_NAME AS databaseName FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?'
+const DESTINATION_OBJECTS_SQL = `SELECT
+   (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?) +
+   (SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ?) +
+   (SELECT COUNT(*) FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ?) AS objectCount`
+const SESSION_BINLOG_SQL = 'SELECT @@session.sql_log_bin AS sessionLogBin'
 
 type Row = Record<string, unknown>
 function first(rows: readonly unknown[]): Row {
@@ -97,6 +125,21 @@ function parseGrants(rows: readonly unknown[]): Grant[] {
     }
   }
   return grants
+}
+
+function hasCompleteDatabaseVisibility(grants: readonly Grant[], database: string): boolean {
+  return grants.some(
+    (grant) =>
+      grant.privileges.has('ALL PRIVILEGES') &&
+      (grant.database === undefined || grant.database === database),
+  )
+}
+
+function binaryVariable(value: unknown, name: string): boolean {
+  const normalized = text(value)
+  if (normalized !== '0' && normalized !== '1')
+    throw new Error(`Destination returned an invalid ${name} value`)
+  return normalized === '1'
 }
 
 export async function runBackupPreflight(request: PreflightRequest): Promise<PreflightReport> {
@@ -218,6 +261,97 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
       privileges,
       variables,
       ...(replica ? { replica } : {}),
+    }
+  } catch (error) {
+    if (error && typeof error === 'object' && ('code' in error || 'sqlState' in error))
+      throw sanitizeDatabaseError(error)
+    throw error
+  } finally {
+    if (connection) {
+      try {
+        await connection.end()
+      } catch {
+        /* A destroyed connection is already closed. */
+      }
+    }
+  }
+}
+
+export async function runRestorePreflight(
+  request: RestorePreflightRequest,
+): Promise<RestorePreflightReport> {
+  if (!['require-empty', 'allow-existing'].includes(request.destinationPolicy))
+    throw new Error('Restore requires an explicit destination policy')
+  if (!['reject', 'drop', 'truncate', 'delete'].includes(request.overwritePolicy))
+    throw new Error('Restore requires an explicit overwrite policy')
+  if (!['disable', 'enable'].includes(request.binlogPolicy))
+    throw new Error('Restore requires an explicit binlog policy')
+  if (request.destinationDatabase === '' || request.destinationDatabase.includes('\0'))
+    throw new Error('Restore requires a valid destination database')
+  if (
+    ['information_schema', 'mysql', 'performance_schema', 'sys'].includes(
+      request.destinationDatabase.toLowerCase(),
+    )
+  )
+    throw new Error('Restore cannot target a MySQL system database')
+  if (request.overwritePolicy !== 'reject' && request.destinationPolicy !== 'allow-existing')
+    throw new Error('Destructive overwrite requires the allow-existing destination policy')
+
+  const timeoutMilliseconds = request.timeoutMilliseconds ?? 10_000
+  const factory = request.connectionFactory ?? mysqlConnectionFactory
+  let connection
+  try {
+    connection = await factory(connectionOptions(request.config.connection, timeoutMilliseconds))
+    const query = (sql: string, values?: readonly unknown[]) =>
+      queryWithDeadline(connection!, sql, values, {
+        timeoutMilliseconds,
+        ...(request.signal ? { signal: request.signal } : {}),
+      })
+    const serverRow = first(await query(SERVER_SQL))
+    const version = text(serverRow.version)
+    const product = productOf(version, text(serverRow.versionComment))
+    const databaseRows = await query(DESTINATION_SQL, [request.destinationDatabase])
+    const exists = databaseRows.length > 0
+    const grants = parseGrants(await query('SHOW GRANTS'))
+    if (!hasCompleteDatabaseVisibility(grants, request.destinationDatabase))
+      throw new Error(
+        'Restore preflight requires ALL PRIVILEGES globally or on the whole destination database to prove catalog visibility',
+      )
+    const objectCount = exists
+      ? text(
+          first(
+            await query(DESTINATION_OBJECTS_SQL, [
+              request.destinationDatabase,
+              request.destinationDatabase,
+              request.destinationDatabase,
+            ]),
+          ).objectCount,
+        )
+      : '0'
+    if (!/^(0|[1-9]\d*)$/u.test(objectCount) || !Number.isSafeInteger(Number(objectCount)))
+      throw new Error('Destination preflight returned an invalid object count')
+    const objects = Number(objectCount)
+    if (objects > 0 && request.destinationPolicy === 'require-empty')
+      throw new Error(
+        `Destination database is not empty: ${request.destinationDatabase} contains ${objects} objects`,
+      )
+    const variables = first(
+      await query(product === 'mysql' ? MYSQL_VARIABLES_SQL : MARIADB_VARIABLES_SQL),
+    )
+    const logBin = binaryVariable(variables.logBin, 'global binlog')
+    if (request.binlogPolicy === 'disable') await query('SET SESSION sql_log_bin = 0')
+    const sessionLogBin = binaryVariable(
+      first(await query(SESSION_BINLOG_SQL)).sessionLogBin,
+      'session binlog',
+    )
+    if (request.binlogPolicy === 'enable' && (!logBin || !sessionLogBin))
+      throw new Error('Destination binlogging is disabled and cannot satisfy enable policy')
+    if (request.binlogPolicy === 'disable' && sessionLogBin)
+      throw new Error('Destination session binlogging could not be disabled safely')
+    return {
+      server: { product, version },
+      destination: { database: request.destinationDatabase, exists, objects },
+      logBin,
     }
   } catch (error) {
     if (error && typeof error === 'object' && ('code' in error || 'sqlState' in error))

@@ -8,7 +8,7 @@ import {
   tlsOptions,
   type QueryConnection,
 } from '../src/core/database.js'
-import { runBackupPreflight } from '../src/core/preflight.js'
+import { runBackupPreflight, runRestorePreflight } from '../src/core/preflight.js'
 
 const config = defaultConfig as PorteauConfig
 type Responses = {
@@ -235,4 +235,224 @@ describe('read-only backup preflight', () => {
       }),
     ).rejects.toThrow(/safe lock strategy/)
   })
+})
+
+describe('destination restore preflight', () => {
+  function destination(
+    objects: string | number,
+    exists = true,
+    options: {
+      readonly globalLogBin?: boolean
+      readonly sessionLogBin?: boolean
+      readonly disableEffective?: boolean
+      readonly rejectDisable?: boolean
+      readonly grants?: readonly unknown[]
+    } = {},
+  ) {
+    let ended = 0
+    let sessionLogBin = options.sessionLogBin ?? true
+    const queries: Array<{ sql: string; values?: readonly unknown[] }> = []
+    const connection: QueryConnection = {
+      async query(sql, values) {
+        queries.push({ sql, ...(values ? { values } : {}) })
+        if (sql.includes('@@version AS'))
+          return [{ version: '8.4.1', versionComment: 'MySQL Community' }]
+        if (sql.includes('information_schema.SCHEMATA'))
+          return exists ? [{ databaseName: 'restored' }] : []
+        if (sql === 'SHOW GRANTS')
+          return options.grants ?? [{ grant: 'GRANT ALL PRIVILEGES ON *.* TO restore' }]
+        if (sql.includes('AS objectCount')) return [{ objectCount: String(objects) }]
+        if (sql.includes('gtid_mode'))
+          return [{ gtidMode: 'ON', logBin: Number(options.globalLogBin ?? true) }]
+        if (sql === 'SET SESSION sql_log_bin = 0') {
+          if (options.rejectDisable)
+            throw { code: 'ER_SPECIFIC_ACCESS_DENIED_ERROR', sqlState: '42000' }
+          if (options.disableEffective !== false) sessionLogBin = false
+          return []
+        }
+        if (sql.includes('@@session.sql_log_bin')) return [{ sessionLogBin: Number(sessionLogBin) }]
+        throw new Error(`Unexpected SQL in test: ${sql}`)
+      },
+      async end() {
+        ended += 1
+      },
+      destroy() {},
+    }
+    return { connection, queries, ended: () => ended }
+  }
+
+  it('accepts an absent or empty destination using parameterized inspection and closes', async () => {
+    for (const exists of [false, true]) {
+      const state = destination(0, exists)
+      await expect(
+        runRestorePreflight({
+          config,
+          destinationDatabase: 'restored',
+          destinationPolicy: 'require-empty',
+          overwritePolicy: 'reject',
+          binlogPolicy: 'disable',
+          connectionFactory: async () => state.connection,
+        }),
+      ).resolves.toMatchObject({
+        destination: { database: 'restored', exists, objects: 0 },
+        logBin: true,
+      })
+      expect(state.queries.filter(({ values }) => values).map(({ values }) => values)).toEqual(
+        exists ? [['restored'], ['restored', 'restored', 'restored']] : [['restored']],
+      )
+      expect(state.ended()).toBe(1)
+    }
+  })
+
+  it('refuses existing objects by default and destructive policy without allow-existing', async () => {
+    const nonempty = destination(2)
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => nonempty.connection,
+      }),
+    ).rejects.toThrow(/not empty/u)
+    expect(nonempty.ended()).toBe(1)
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'drop',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => destination(0).connection,
+      }),
+    ).rejects.toThrow(/allow-existing/u)
+  })
+
+  it('allows existing objects only through an explicit existing-destination policy', async () => {
+    const state = destination(2)
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'allow-existing',
+        overwritePolicy: 'truncate',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => state.connection,
+      }),
+    ).resolves.toMatchObject({ destination: { exists: true, objects: 2 } })
+  })
+
+  it('requires a valid complete object count and an enabled session for enable-binlog policy', async () => {
+    const malformed = destination('not-a-count')
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => malformed.connection,
+      }),
+    ).rejects.toThrow(/invalid object count/u)
+
+    const disabled = destination(0, true, { sessionLogBin: false })
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'enable',
+        connectionFactory: async () => disabled.connection,
+      }),
+    ).rejects.toThrow(/binlogging is disabled/u)
+
+    const globallyDisabled = destination(0, true, { globalLogBin: false })
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'enable',
+        connectionFactory: async () => globallyDisabled.connection,
+      }),
+    ).rejects.toThrow(/binlogging is disabled/u)
+  })
+
+  it('proves disable-binlog capability and complete catalog visibility', async () => {
+    const ineffective = destination(0, true, { disableEffective: false })
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => ineffective.connection,
+      }),
+    ).rejects.toThrow(/could not be disabled/u)
+
+    const rejected = destination(0, true, { rejectDisable: true })
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => rejected.connection,
+      }),
+    ).rejects.toMatchObject({ code: 'ER_SPECIFIC_ACCESS_DENIED_ERROR' })
+
+    const hidden = destination(0, true, {
+      grants: [{ grant: 'GRANT CREATE, INSERT, SELECT ON `restored`.* TO restore' }],
+    })
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => hidden.connection,
+      }),
+    ).rejects.toThrow(/catalog visibility/u)
+
+    const wholeDatabase = destination(0, true, {
+      grants: [{ grant: 'GRANT ALL PRIVILEGES ON `restored`.* TO restore' }],
+    })
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'restored',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => wholeDatabase.connection,
+      }),
+    ).resolves.toMatchObject({ destination: { objects: 0 } })
+  })
+
+  it.each(['mysql', 'information_schema', 'performance_schema', 'sys'])(
+    'refuses system destination %s before connecting',
+    async (destinationDatabase) => {
+      let connected = false
+      await expect(
+        runRestorePreflight({
+          config,
+          destinationDatabase,
+          destinationPolicy: 'require-empty',
+          overwritePolicy: 'reject',
+          binlogPolicy: 'disable',
+          connectionFactory: async () => {
+            connected = true
+            return destination(0).connection
+          },
+        }),
+      ).rejects.toThrow(/system database/u)
+      expect(connected).toBe(false)
+    },
+  )
 })

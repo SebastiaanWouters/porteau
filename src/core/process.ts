@@ -29,6 +29,8 @@ function appendBounded(current: Buffer, chunk: Buffer, limit: number): Buffer {
 
 /** Run a native tool without ever putting its arguments in an error message. */
 export function runNativeProcess(options: NativeProcessOptions): Promise<ProcessOutcome> {
+  if (options.signal?.aborted)
+    return Promise.reject(new Error('Native process cancelled before start'))
   return new Promise((resolve, reject) => {
     const child = spawn(options.executable, [...(options.args ?? [])], {
       cwd: options.cwd,

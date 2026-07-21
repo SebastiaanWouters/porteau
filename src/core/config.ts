@@ -37,8 +37,10 @@ const configSchema = v.pipe(
       }),
     }),
     restore: v.strictObject({
-      threads: v.pipe(v.number(), v.integer(), v.minValue(1)),
+      threads: v.pipe(v.number(), v.integer(), v.minValue(2)),
       destinationPolicy: v.picklist(['require-empty', 'allow-existing']),
+      overwritePolicy: v.picklist(['reject', 'drop', 'truncate', 'delete']),
+      binlogPolicy: v.picklist(['disable', 'enable']),
       verifyChecksums: v.picklist(['off', 'warn', 'required']),
       deferIndexes: v.picklist(['off', 'per-table', 'all']),
     }),
@@ -94,6 +96,8 @@ export const defaultConfig = {
   restore: {
     threads: 4,
     destinationPolicy: 'require-empty',
+    overwritePolicy: 'reject',
+    binlogPolicy: 'disable',
     verifyChecksums: 'warn',
     deferIndexes: 'per-table',
   },

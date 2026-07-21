@@ -24,7 +24,11 @@ export interface BackupRequest {
 
 export interface RestoreRequest {
   readonly artifactPath: string
+  readonly sourceDatabase: string
   readonly destinationDatabase: string
+  readonly destinationPolicy: 'require-empty' | 'allow-existing'
+  readonly overwritePolicy: 'reject' | 'drop' | 'truncate' | 'delete'
+  readonly binlogPolicy: 'disable' | 'enable'
 }
 
 export interface ArtifactVerification {
