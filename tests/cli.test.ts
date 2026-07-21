@@ -20,6 +20,25 @@ describe('CLI contract', () => {
     expect(output.join('\n')).toContain('--output')
   })
 
+  it('advertises read-only doctor and setup checks', async () => {
+    const doctorOutput: string[] = []
+    const setupOutput: string[] = []
+    expect(
+      await executeCli({
+        args: ['doctor', '--help'],
+        stdout: (line) => doctorOutput.push(line),
+      }),
+    ).toBe(0)
+    expect(
+      await executeCli({
+        args: ['setup', '--help'],
+        stdout: (line) => setupOutput.push(line),
+      }),
+    ).toBe(0)
+    expect(doctorOutput.join('\n')).toContain('--config')
+    expect(setupOutput.join('\n')).toContain('--check')
+  })
+
   it('returns 130 when SIGINT interrupts help rendering', async () => {
     expect(
       await executeCli({

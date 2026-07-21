@@ -129,8 +129,8 @@ porteau/
 │   │   ├── backup.ts                # Non-interactive backup command (implemented)
 │   │   ├── restore.ts               # Command skeleton; destination mutation waits for Phase 5
 │   │   ├── init.ts                  # Command skeleton
-│   │   ├── setup.ts                 # Command skeleton; read-only --check is next
-│   │   ├── doctor.ts                # Command skeleton; read-only diagnostics are next
+│   │   ├── setup.ts                 # Read-only --check diagnostics (implemented)
+│   │   ├── doctor.ts                # Read-only dependency diagnostics (implemented)
 │   │   └── config.ts                # Command skeleton
 │   ├── core/
 │   │   ├── engine.ts                # Narrow engine capabilities and request types
@@ -150,7 +150,7 @@ porteau/
 │   │   ├── manifest.json            # Canonical supported package/digest manifest
 │   │   ├── manifest.ts              # Validated TypeScript access
 │   │   ├── ubuntu.ts                # Guarded apt installer (planned Phase 3)
-│   │   └── diagnostics.ts            # Shared read-only diagnostics (immediate next slice)
+│   │   └── diagnostics.ts            # Shared read-only dependency diagnostics (implemented)
 │   ├── presentation/
 │   │   ├── context.ts               # TTY, CI, color, verbosity, JSON, and prompt policy (planned Phase 4)
 │   │   ├── prompts.ts               # Thin @clack/prompts wrappers (planned Phase 4)
@@ -779,6 +779,8 @@ Requirements:
 - Output-directory and disk-space status.
 - Suggested correction for every failed check.
 
+Current implementation status: the first read-only dependency slice reports OS/codename/architecture and automatic-setup support, the Node version boundary, independent mydumper/myloader resolution source/path and exact versions, pair compatibility, and actionable corrections. Porteau-version/effective-config-file reporting, machine-log probing, database/catalog/privilege checks, replica state, and output-directory capacity remain future slices. `setup --check` currently reuses this same dependency result; setup planning and mutation are not implemented.
+
 ---
 
 ## 15. Development workflow
@@ -897,11 +899,21 @@ Phase 2 deliberately fails closed outside its qualified boundary. MariaDB and no
 
 The committed Phase 1 types are foundations, not frozen external APIs. `BackupRequest`, `RestoreRequest`, and `EngineCapabilities` are deliberately minimal and should grow from concrete requirements in their owning phases. Preserve the `BackupEngine` isolation boundary and normalized-event discriminant, but prefer extending these types over creating parallel command-specific request models. Phase 2 consumes only the backup-facing structural subset of `BackupEngine` (`inspect`, `backup`, and `verifyArtifact`); no concrete adapter claims to implement the full interface until Phase 5 adds `restore`. The CLI has no public JSON event compatibility promise until its schema is documented and versioned in Phase 4.
 
+### In progress — Phase 3 diagnostics slice (2026-07-21)
+
+- Added a pure, dependency-injected read-only diagnostics service for OS release/codename, Debian architecture, supported Ubuntu manifest targets, stable Node `>=22.18.0`, independent mydumper/myloader resolution, exact manifest-supported versions, and pair matching.
+- Extended the Phase 2 tool boundary with structured resolution source and failure metadata while preserving environment → config → `PATH` precedence and terminal explicit-path failures. Config-relative paths resolve from the explicit config file directory, matching backup behavior.
+- Wired the same plain diagnostic result and rendering path to `porteau doctor` and `porteau setup --check`. Blocking Node/tool failures return non-zero; unsupported automatic-setup platforms remain actionable warnings when manually installed dependencies are otherwise healthy. `porteau setup` without `--check` refuses mutation because no installer backend exists yet.
+- Kept version probes credential-safe by stripping `PORTEAU_PASSWORD` and rendering fixed corrections rather than arbitrary child-process errors.
+- Added service boundary tests and real command-path tests for both commands, including config-relative executables, strict environment overrides, unsupported versions, secret stripping, Node boundary/prerelease cases, exit behavior, and setup mutation refusal. The current repository baseline is 76 passing tests with green `vp check`, `vp test`, and `vp pack`.
+
+Phase 3 is not complete. The manifest-backed Ubuntu planner/executor, explicit `--yes` approval boundary, generated standalone installer, Node 24 installation flow, installer test matrix, manual-platform documentation, and committed disposable-MySQL verification harness remain outstanding.
+
 ### Current dependency boundary
 
 The Phase 2 production dependency set is c12, citty, mysql2, and Valibot. Add remaining dependencies in their owning phase:
 
-- Phase 3: no presentation dependency; setup/doctor expose pure diagnostic and mutation-planning services.
+- Phase 3: no presentation dependency; setup/doctor currently expose the pure diagnostic service. Mutation planning remains the next slice and must stay separate from rendering and execution.
 - Phase 4: `@clack/prompts`, consola, and nostics.dev, after their exact APIs and supported Node range are verified.
 
 Do not import Clack or consola into `src/core` or `src/setup`. Do not make backup correctness depend on presentation, and do not make the generated installer depend on Node or the built CLI at runtime.
@@ -936,12 +948,21 @@ Do not import Clack or consola into `src/core` or `src/setup`. Do not make backu
 
 Completed on 2026-07-21 within the qualified boundary recorded in Section 17. Broader server, TLS, identifier, and object support must add evidence and tests before relaxing those fail-closed gates.
 
-### Phase 3 — Read-only diagnostics and setup backend (next)
+### Phase 3 — Read-only diagnostics and setup backend (in progress)
 
-**Immediate next slice:** implement a pure read-only diagnostics service in `src/setup/diagnostics.ts`, reusing `src/core/tools.ts` and the validated compatibility manifest, then wire the same result model to `porteau doctor` and `porteau setup --check`. Cover OS/codename/architecture detection, Node version, independent mydumper/myloader resolution, matching supported versions, and actionable status without prompts or mutation. Add focused service and CLI tests before beginning installer mutation.
+**Completed first slice:** implement a pure read-only diagnostics service in `src/setup/diagnostics.ts`, reusing `src/core/tools.ts` and the validated compatibility manifest, then wire the same result model to `porteau doctor` and `porteau setup --check`. Cover OS/codename/architecture detection, Node version, independent mydumper/myloader resolution, matching supported versions, and actionable status without prompts or mutation. Add focused service and CLI tests before beginning installer mutation.
 
-- Implement reusable OS, architecture, tool-resolution, version, and compatibility diagnostics used by both `doctor` and setup planning.
-- Implement `doctor` and `setup --check` as read-only non-interactive commands first. Reuse Phase 2 tool inspection rather than introducing a second version parser.
+Completed on 2026-07-21. The shared dependency-injected service reports supported Ubuntu targets, strict stable Node compatibility, independent native-tool paths and resolution sources, exact versions, pair compatibility, and actionable corrections. Config-relative paths match backup resolution, explicit environment overrides do not fall through, credential variables are removed from probe environments, and arbitrary child errors are not rendered. `doctor` and `setup --check` use the same plain read-only command path with command-level regression coverage.
+
+**Next ready slice:** implement the manifest-backed Ubuntu installation planner with mutation, policy, and rendering kept separate. It must consume the completed diagnostic model, produce an actionable no-mutation plan, and require an explicit approval value before any executor can mutate the system.
+
+Completed:
+
+- Reusable OS, architecture, tool-resolution, version, and compatibility diagnostics used by both `doctor` and future setup planning.
+- `doctor` and `setup --check` as read-only non-interactive commands, reusing the Phase 2 tool resolution and version parser.
+
+Remaining:
+
 - Implement a manifest-backed Ubuntu installation planner/executor with mutation separated from policy and rendering. The backend requires an explicit approval value but must not prompt itself.
 - Implement non-interactive `setup --yes`; without `--yes`, the temporary plain CLI can print the plan and refuse mutation until Phase 4 supplies interactive confirmation.
 - Generate root `install.sh` from the canonical manifest.
@@ -1013,4 +1034,4 @@ Before Phase 4 UI work, add the committed disposable-MySQL harness for the Phase
 | Standalone packaging | Experimental secondary artifact later | Medium |
 | Full-screen terminal UI | None | High |
 
-Phases 1 and 2 are complete within the qualified boundary in Section 17. Future work must preserve these safety, compatibility, event, artifact, and installer contracts, while correcting assumptions whenever qualification against pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.
+Phases 1 and 2 are complete within the qualified boundary in Section 17. Phase 3 is in progress: its read-only native dependency diagnostics and `doctor`/`setup --check` command slice are complete, while installer planning, approved mutation, generated Bash, installer tests, and the disposable-MySQL verification harness remain. Future work must preserve these safety, compatibility, event, artifact, and installer contracts, while correcting assumptions whenever qualification against pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.

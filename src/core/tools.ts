@@ -21,6 +21,30 @@ export interface InspectedTool {
   readonly version: string
 }
 
+export type ToolResolutionSource = 'environment' | 'config' | 'path'
+
+export interface ResolvedTool {
+  readonly path: string
+  readonly source: ToolResolutionSource
+}
+
+export class ToolResolutionError extends Error {
+  readonly name = 'ToolResolutionError'
+
+  constructor(
+    readonly tool: ToolName,
+    readonly source: ToolResolutionSource,
+    readonly reason: 'not-executable' | 'not-found',
+    readonly path?: string,
+  ) {
+    super(
+      reason === 'not-executable'
+        ? `Configured ${tool} is not executable: ${path}`
+        : `Unable to find ${tool} on PATH`,
+    )
+  }
+}
+
 async function executable(path: string): Promise<boolean> {
   try {
     await access(path, constants.X_OK)
@@ -30,24 +54,35 @@ async function executable(path: string): Promise<boolean> {
   }
 }
 
-export async function resolveTool(
+export async function resolveToolInfo(
   name: ToolName,
   options: ResolveToolOptions = {},
-): Promise<string> {
+): Promise<ResolvedTool> {
   const env = options.env ?? process.env
-  const explicit = env[`PORTEAU_${name.toUpperCase()}`] ?? options.configPath
+  const environmentPath = env[`PORTEAU_${name.toUpperCase()}`]
+  const explicit = environmentPath ?? options.configPath
   if (explicit !== undefined) {
     const path = resolve(options.cwd ?? process.cwd(), explicit)
-    if (!(await executable(path))) throw new Error(`Configured ${name} is not executable: ${path}`)
-    return path
+    const source = environmentPath === undefined ? 'config' : 'environment'
+    if (!(await executable(path))) {
+      throw new ToolResolutionError(name, source, 'not-executable', path)
+    }
+    return { path, source }
   }
 
   for (const directory of (env.PATH ?? '').split(delimiter)) {
     if (directory === '') continue
     const candidate = join(directory, name)
-    if (await executable(candidate)) return candidate
+    if (await executable(candidate)) return { path: candidate, source: 'path' }
   }
-  throw new Error(`Unable to find ${name} on PATH`)
+  throw new ToolResolutionError(name, 'path', 'not-found')
+}
+
+export async function resolveTool(
+  name: ToolName,
+  options: ResolveToolOptions = {},
+): Promise<string> {
+  return (await resolveToolInfo(name, options)).path
 }
 
 export function parseToolVersion(name: ToolName, output: string): string {
@@ -58,7 +93,7 @@ export function parseToolVersion(name: ToolName, output: string): string {
   return match[1]
 }
 
-export async function inspectTool(
+export async function inspectToolVersion(
   name: ToolName,
   path: string,
   env?: NodeJS.ProcessEnv,
@@ -72,10 +107,20 @@ export async function inspectTool(
   })
   if (stderr !== '') throw new Error(`${name} wrote unexpected version diagnostics`)
   const version = parseToolVersion(name, stdout)
+  return { name, path, version }
+}
+
+export async function inspectTool(
+  name: ToolName,
+  path: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<InspectedTool> {
+  const inspected = await inspectToolVersion(name, path, env)
+  const { version } = inspected
   if (!compatibilityManifest.engine.tools[name].acceptedVersions.includes(version)) {
     throw new Error(`Unsupported ${name} version: ${version}`)
   }
-  return { name, path, version }
+  return inspected
 }
 
 export function assertMatchingToolVersions(mydumper: InspectedTool, myloader: InspectedTool): void {
