@@ -120,21 +120,34 @@ describe('configuration contract', () => {
   ])('rejects weakened consistency outside expert mode', async (backup) => {
     await expect(
       loadConfig({ cwd: await createWorkspace(), env: {}, flags: { backup } }),
-    ).rejects.toThrow(/require automatic locking/)
+    ).rejects.toThrow(/unsafe or unqualified/)
   })
 
-  it('allows explicitly weakened consistency in expert mode', async () => {
+  it('allows qualified lockless InnoDB behavior in expert mode', async () => {
     const config = await loadConfig({
       cwd: await createWorkspace(),
       env: {},
       flags: {
         backup: {
           profile: 'expert',
-          consistency: { mode: 'safe-no-lock', requireInnoDB: false, protectDdl: false },
+          consistency: { mode: 'safe-no-lock', requireInnoDB: true, protectDdl: false },
         },
       },
     })
 
     expect(config.backup.profile).toBe('expert')
   })
+
+  it.each(['verify-ca', 'verify-identity'])(
+    'rejects %s until CA paths are configurable',
+    async (tls) => {
+      await expect(
+        loadConfig({
+          cwd: await createWorkspace(),
+          env: {},
+          flags: { connection: { tls } },
+        }),
+      ).rejects.toThrow(/CA-verified TLS/)
+    },
+  )
 })

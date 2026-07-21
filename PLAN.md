@@ -38,7 +38,7 @@ When zero primary write interruption is required, Porteau recommends and support
 | Human logging | consola | Normal, quiet, verbose, and non-interactive output |
 | Configuration | c12 + Porteau merger | YAML discovery with replacement precedence and Valibot validation |
 | Validation | Valibot | Runtime validation of config, flags, manifests, and normalized events |
-| MySQL protocol | Direct protocol client (`mysql2` is the Phase 2 candidate) | Catalog, privilege, capability, and destination preflight queries without depending on the `mysql` CLI |
+| MySQL protocol | `mysql2` 3.23.0 | Catalog, privilege, capability, and destination preflight queries without depending on the `mysql` CLI |
 | Structured errors | nostics.dev | Actionable domain errors rendered at the CLI boundary |
 | Backup engine | mydumper/myloader v1 | Pinned, capability-tested external binaries |
 | Full-screen terminal UI | None | Conventional terminal output is simpler and more portable |
@@ -61,7 +61,7 @@ When zero primary write interruption is required, Porteau recommends and support
 Mydumper/myloader best matches Porteau’s distinguishing requirements:
 
 1. **Independent per-table object scopes.** A table can export schema, data, triggers, all objects, or nothing in one consistent run.
-2. **Intended versioned machine output.** `--machine-log-json` is expected to emit JSON Lines suitable for progress and completion handling; the exact streams, versions, fields, and event coverage remain provisional until fixture-backed qualification against the pinned binaries in Phase 2.
+2. **Versioned machine output.** For the pinned binaries, `--machine-log-json` emits schema/event version 1 JSON Lines on stderr with qualified success, failure, warning, lock, progress, completion, and cancellation behavior represented by redacted fixtures.
 3. **Production controls.** It exposes lock modes, transactional-only behavior, adaptive chunking, per-table concurrency, query-duration targets, and workload-aware throttling.
 4. **Manageable artifacts.** It creates separate metadata, schema, and data files that remain inspectable and portable.
 5. **Broader server compatibility.** Its implementation recognizes Oracle MySQL, Percona Server, MariaDB, RDS/Aurora, Google-hosted MySQL, and TiDB, although Porteau will still capability-test rather than claim universal support.
@@ -877,16 +877,27 @@ Do not claim production safety based only on mocked subprocess tests.
 - Strict Valibot configuration schema with defaults, YAML-only c12 loading, replacement array semantics, and `flags → environment → YAML → defaults` precedence.
 - Safety validation that prevents production/replica profiles from weakening automatic locking, InnoDB requirements, or DDL protection.
 - Narrow `BackupEngine` boundary and Porteau-owned discriminated normalized event schema. Large native counters are intentionally represented as decimal strings to avoid JavaScript precision loss.
-- Canonical, schema-validated candidate mydumper/myloader compatibility manifest for v1.0.3-1 and the three planned Ubuntu targets. Package metadata is pinned; native machine-log versions remain provisional until Phase 2 qualification.
+- Canonical, schema-validated candidate mydumper/myloader compatibility manifest for v1.0.3-1 and the three planned Ubuntu targets. Package metadata was pinned in Phase 1; native machine-log version 1 was subsequently qualified in Phase 2.
 - Initial subprocess fixture convention and contract tests for CLI surface, configuration, events, and manifest consistency.
+
+### Completed — Phase 2 (2026-07-21)
+
+- Qualified the checksum-pinned v1.0.3-1 Jammy binaries without system installation and exercised them against an unprivileged disposable MySQL 8.4.10 server. Runtime machine events are JSON Lines on stderr; normal version output is on stdout. Redacted pinned fixtures cover mydumper/myloader success, startup failure, warnings, and mydumper cancellation, including the observed lock/unlock ordering and variable-width fractional timestamps.
+- Selected and pinned `mysql2` 3.23.0. The shared direct-protocol connection boundary uses direct fields, bigint-safe strings, deadlines/abort destruction, sanitized errors, and injectable connections. Read-only preflight validates a qualified MySQL 8 server, databases, selected tables/views, InnoDB safety, useful keys, triggers, grants, GTID/binlog state, and replica state where requested.
+- Added environment/config/PATH tool resolution with terminal explicit-path errors, exact matching version checks, protected `0600` credential defaults files, concrete per-table object scopes, exact table regexes, and child environments stripped of `PORTEAU_PASSWORD`.
+- Added incremental native event parsing, explicit normalized mapping, required completion counters, bounded diagnostics, POSIX process groups, abort/timeout forwarding, TERM-to-KILL escalation, and parser-failure tree cleanup. The lock watchdog remains armed through native `table_unlock` and clears only after the qualified post-unlock event.
+- Added the non-interactive backup safety path and command. It performs preflight before spawning, enables configured triggers/views, rejects unqualified object/TLS/profile combinations, refuses existing output paths, writes to a same-filesystem partial directory, requires process/event/artifact agreement, reserves the final path, atomically publishes, and cleans credentials and partial artifacts on failure or cancellation.
+- Artifact verification requires regular final metadata, no partial metadata, selected database/table metadata, exact database/base-table/view/trigger schema artifacts, and numeric data chunks for nonempty data-bearing tables. Identifiers that mydumper would masquerade are rejected until metadata alias mapping is qualified.
+- Real qualification covered successful backup and restore, independent data exclusion, keyless-table warnings, trigger preservation, view artifacts, non-InnoDB rejection before spawn, zero stdout machine logging, cancellation without completion, and partial metadata on interruption. Deterministic tests cover disagreement, malformed/truncated streams, hanging locks, and child/grandchild cleanup.
+
+Phase 2 deliberately fails closed outside its qualified boundary. MariaDB and non-8.x MySQL are rejected. Routines/events await catalog and artifact qualification. CA-verified TLS modes await explicit CA configuration; `preferred` currently requires TLS during mysql2 preflight rather than retrying plaintext. Nontransactional expert exports are rejected, and verifiable artifact identifiers use a conservative filename-safe subset. Process-tree guarantees are currently POSIX/qualified-Ubuntu guarantees. These are explicit future extensions, not silent fallbacks.
 
 The committed Phase 1 types are foundations, not frozen external APIs. `BackupRequest`, `RestoreRequest`, and `EngineCapabilities` are deliberately minimal and should grow from concrete requirements in their owning phases. Preserve the `BackupEngine` isolation boundary and normalized-event discriminant, but prefer extending these types over creating parallel command-specific request models. Phase 2 consumes only the backup-facing structural subset of `BackupEngine` (`inspect`, `backup`, and `verifyArtifact`); no concrete adapter claims to implement the full interface until Phase 5 adds `restore`. The CLI has no public JSON event compatibility promise until its schema is documented and versioned in Phase 4.
 
 ### Current dependency boundary
 
-Only c12, citty, and Valibot are production dependencies today. Add dependencies in their owning phase:
+The Phase 2 production dependency set is c12, citty, mysql2, and Valibot. Add remaining dependencies in their owning phase:
 
-- Phase 2: evaluate and pin a direct MySQL protocol client; `mysql2` is the initial candidate.
 - Phase 3: no presentation dependency; setup/doctor expose pure diagnostic and mutation-planning services.
 - Phase 4: `@clack/prompts`, consola, and nostics.dev, after their exact APIs and supported Node range are verified.
 
@@ -901,7 +912,7 @@ Do not import Clack or consola into `src/core` or `src/setup`. Do not make backu
 - The baseline listed in Section 17 is implemented.
 - Remaining subprocess scenarios and native machine-log fixtures belong to Phase 2, where their required behavior is known.
 
-### Phase 2 — Qualify and implement safe backup integration
+### Phase 2 — Qualify and implement safe backup integration (complete)
 
 - Qualify pinned mydumper/myloader binaries first: verify version output, machine-log flag support, event stream location, native schema/version fields, completion semantics, metadata format, lock-related events, and cancellation behavior. Capture redacted fixtures and correct the manifest assumptions before building adapters.
 - Evaluate `mysql2` against the supported Node range, TLS modes, cancellation/time limits, error redaction, and large-value handling; pin it if suitable, otherwise select another direct protocol client without creating a multi-driver abstraction. Implement shared, injectable connection handling for source/destination preflight. Keep passwords out of URLs, argv, logs, and errors; set connection/TLS options directly.
@@ -919,6 +930,8 @@ Do not import Clack or consola into `src/core` or `src/setup`. Do not make backu
 - Add unit and process tests, then real-MySQL tests for consistent backup under writes, lock behavior, filters, nontransactional rejection, and artifact integrity before UI polish.
 
 **Exit gate:** a non-interactive backup can run end-to-end, cancellation cleans the full process tree and secret files, success requires process/event/artifact agreement, and native behavior is represented by pinned fixtures. Myloader machine-event qualification is complete even though restore mapping and destination mutation remain Phase 5. The Phase 2 adapter implements only the backup-facing structural subset of `BackupEngine`, and `vp check`, `vp test`, and `vp pack` pass.
+
+Completed on 2026-07-21 within the qualified boundary recorded in Section 17. Broader server, TLS, identifier, and object support must add evidence and tests before relaxing those fail-closed gates.
 
 ### Phase 3 — Read-only diagnostics and setup backend
 
@@ -993,4 +1006,4 @@ The generator must consume validated canonical data, but the committed `install.
 | Standalone packaging | Experimental secondary artifact later | Medium |
 | Full-screen terminal UI | None | High |
 
-Phase 1 scaffolding is complete. Future work must preserve these safety, compatibility, event, artifact, and installer contracts, while correcting assumptions whenever qualification against the pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.
+Phases 1 and 2 are complete within the qualified boundary in Section 17. Future work must preserve these safety, compatibility, event, artifact, and installer contracts, while correcting assumptions whenever qualification against pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.
