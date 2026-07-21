@@ -12,6 +12,7 @@ import { runBackupPreflight } from '../src/core/preflight.js'
 
 const config = defaultConfig as PorteauConfig
 type Responses = {
+  databases?: readonly unknown[]
   tables?: readonly unknown[]
   grants?: readonly unknown[]
   replica?: readonly unknown[]
@@ -25,7 +26,7 @@ function fake(responses: Responses = {}) {
       queries.push({ sql, ...(values ? { values } : {}) })
       if (sql.includes('@@version AS'))
         return [{ version: '8.4.1', versionComment: 'MySQL Community' }]
-      if (sql.includes('SCHEMATA')) return [{ databaseName: 'app' }]
+      if (sql.includes('SCHEMATA')) return responses.databases ?? [{ databaseName: 'app' }]
       if (sql.includes('information_schema.TABLES'))
         return (
           responses.tables ?? [
@@ -189,5 +190,49 @@ describe('read-only backup preflight', () => {
     await expect(preflight({ grants: [{ grant: 'GRANT SELECT ON *.* TO user' }] })).rejects.toThrow(
       /safe lock strategy/u,
     )
+  })
+
+  it.each(['GRANT SELECT ON `other`.* TO user', 'GRANT SELECT ON `app`.`users` TO user'])(
+    'rejects incomplete SELECT catalog proof from %s',
+    async (selectGrant) => {
+      await expect(
+        preflight({
+          grants: [
+            { grant: 'GRANT RELOAD, PROCESS, BACKUP_ADMIN ON *.* TO user' },
+            { grant: selectGrant },
+            { grant: 'GRANT SHOW VIEW, TRIGGER ON `app`.* TO user' },
+          ],
+        }),
+      ).rejects.toThrow(/safe lock strategy/)
+    },
+  )
+
+  it('accepts exact global administration and whole-database object grants', async () => {
+    await expect(
+      preflight({
+        grants: [
+          { grant: 'GRANT RELOAD, PROCESS, BACKUP_ADMIN ON *.* TO user' },
+          { grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO user' },
+        ],
+      }),
+    ).resolves.toHaveProperty('report.tables')
+  })
+
+  it('requires data privileges across every selected database', async () => {
+    const state = fake({
+      databases: [{ databaseName: 'app' }, { databaseName: 'audit' }],
+      grants: [
+        { grant: 'GRANT RELOAD, PROCESS, BACKUP_ADMIN ON *.* TO user' },
+        { grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO user' },
+      ],
+    })
+    await expect(
+      runBackupPreflight({
+        config,
+        databases: ['app', 'audit'],
+        tablePatterns: ['app.*'],
+        connectionFactory: async () => state.connection,
+      }),
+    ).rejects.toThrow(/safe lock strategy/)
   })
 })

@@ -36,6 +36,32 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+const autoLifecycle = [
+  ['lock', 'global_lock', 'started'],
+  ['backup_consistency', 'startup', 'finished'],
+  ['table_unlock', 'startup', 'finished'],
+  ['dump_phase', 'wait_database_finish', 'progress'],
+] as const
+
+class AutoConsistencyLifecycle {
+  #next = 0
+  accept(event: EngineEvent): void {
+    const transition = [event.sourceEvent, event.sourcePhase, event.sourceStatus]
+    const recognized = autoLifecycle.some((item) =>
+      item.every((value, index) => transition[index] === value),
+    )
+    if (!recognized) return
+    const expected = autoLifecycle[this.#next]
+    if (!expected || !expected.every((value, index) => transition[index] === value))
+      throw new Error('Mydumper reported a reordered AUTO consistency lifecycle')
+    this.#next += 1
+  }
+  assertComplete(): void {
+    if (this.#next !== autoLifecycle.length)
+      throw new Error('Mydumper did not complete the qualified AUTO consistency lifecycle')
+  }
+}
+
 function outputPath(config: PorteauConfig, override: string | undefined, cwd: string): string {
   const configured = override ?? config.backup.directory
   const expanded = configured.replaceAll('{{date}}', new Date().toISOString().slice(0, 10))
@@ -143,6 +169,8 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
   let finalReserved = false
   let published = false
   const events: EngineEvent[] = []
+  const lifecycle =
+    config.backup.consistency.mode === 'auto' ? new AutoConsistencyLifecycle() : undefined
   let result: BackupResult | undefined
   let failure: unknown
   let cleanupFailure: AggregateError | undefined
@@ -155,10 +183,12 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
       signal: lockController.signal,
       env: childEnvironment,
       onEvent(event) {
+        lifecycle?.accept(event)
         events.push(event)
         if (
           lockTimer === undefined &&
           event.sourceEvent === 'lock' &&
+          event.sourcePhase === 'global_lock' &&
           event.sourceStatus === 'started'
         ) {
           lockTimer = setTimeout(() => {
@@ -189,15 +219,20 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
       throw new Error(`Mydumper exited with code ${outcome.exitCode ?? -1}`)
     if (events.some((event) => event.type === 'error' && event.fatal))
       throw new Error('Mydumper reported a fatal event')
+    lifecycle?.assertComplete()
     const completions = events.filter((event) => event.type === 'completion')
     if (completions.length !== 1)
       throw new Error('Mydumper did not report exactly one completion event')
     const completion = completions[0]!
     if (completion.exitCode !== 0 || completion.errors !== '0')
       throw new Error('Mydumper completion reported errors')
+    const expectedFiles = Number(completion.files)
+    if (!Number.isSafeInteger(expectedFiles))
+      throw new Error('Mydumper reported an invalid file count')
     await verifyMydumperArtifact(temporaryDirectory, selected, {
       triggers: config.objects.triggers,
       signal: lockController.signal,
+      expectedFiles,
     })
     if (lockController.signal.aborted) throw new Error('Backup cancelled')
     try {

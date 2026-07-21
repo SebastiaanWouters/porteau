@@ -22,12 +22,17 @@ export const backupCommand = defineCommand({
   },
   async run({ args }) {
     const configFile = args.config ? resolve(args.config) : undefined
-    const config = await loadConfig(configFile ? { configFile } : {})
     const controller = new AbortController()
     const abort = () => controller.abort()
     process.once('SIGINT', abort)
     process.once('SIGTERM', abort)
     try {
+      const config = await loadConfig(configFile ? { configFile } : {})
+      if (controller.signal.aborted) {
+        const error = new Error('Backup cancelled')
+        error.name = 'AbortError'
+        throw error
+      }
       const result = await runBackup({
         config,
         configDirectory: configFile ? dirname(configFile) : process.cwd(),

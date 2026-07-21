@@ -107,4 +107,33 @@ describe('safe backup service', () => {
     ).rejects.toThrow(/safety budget/)
     await expect(lstat(join(cwd, 'never-finalized'))).rejects.toThrow()
   })
+
+  it.each([
+    ['missing lifecycle transition', { PORTEAU_FIXTURE_LIFECYCLE: 'missing' }],
+    ['reordered lifecycle transition', { PORTEAU_FIXTURE_LIFECYCLE: 'reordered' }],
+    ['completion/artifact file-count disagreement', { PORTEAU_FIXTURE_FILE_COUNT: '5' }],
+  ])('does not publish on %s', async (_name, fixtureEnvironment) => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-reject-'))
+    directories.push(cwd)
+    await symlink(fixture, join(cwd, 'mydumper'))
+    await symlink(fixture, join(cwd, 'myloader'))
+    const config = {
+      ...defaultConfig,
+      connection: { ...defaultConfig.connection, user: 'backup', password: 'secret' },
+      include: { databases: ['app'] },
+      backup: { ...defaultConfig.backup, directory: './rejected', compression: 'none' },
+    } as PorteauConfig
+    await expect(
+      runBackup({
+        config,
+        configDirectory: cwd,
+        environment: {
+          PATH: `${cwd}${delimiter}${dirname(process.execPath)}`,
+          ...fixtureEnvironment,
+        },
+        connectionFactory: async () => connection(),
+      }),
+    ).rejects.toThrow()
+    await expect(lstat(join(cwd, 'rejected'))).rejects.toThrow()
+  })
 })

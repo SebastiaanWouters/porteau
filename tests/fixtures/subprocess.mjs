@@ -34,15 +34,40 @@ if (toolName === 'mydumper') {
       `${JSON.stringify({ ...base, seq: 1, event: 'lock', phase: 'global_lock', status: 'started' })}\n`,
     )
     process.stderr.write(
-      `${JSON.stringify({ ...base, seq: 2, event: 'table_unlock', phase: 'startup', status: 'finished' })}\n`,
+      `${JSON.stringify({ ...base, seq: 2, event: 'backup_consistency', phase: 'startup', status: 'finished' })}\n`,
+    )
+    process.stderr.write(
+      `${JSON.stringify({ ...base, seq: 3, event: 'table_unlock', phase: 'startup', status: 'finished' })}\n`,
     )
     setInterval(() => {}, 1_000)
   } else {
-    process.stderr.write(
-      `${JSON.stringify({ ...base, seq: 1, event: 'dump_started', phase: 'dump_start', status: 'started' })}\n`,
+    const transitions = [
+      { event: 'lock', phase: 'global_lock', status: 'started' },
+      { event: 'backup_consistency', phase: 'startup', status: 'finished' },
+      { event: 'table_unlock', phase: 'startup', status: 'finished' },
+      { event: 'dump_phase', phase: 'wait_database_finish', status: 'progress' },
+    ]
+    if (process.env.PORTEAU_FIXTURE_LIFECYCLE === 'missing') transitions.splice(1, 1)
+    if (process.env.PORTEAU_FIXTURE_LIFECYCLE === 'reordered') {
+      ;[transitions[1], transitions[2]] = [transitions[2], transitions[1]]
+    }
+    transitions.forEach((transition, index) =>
+      process.stderr.write(`${JSON.stringify({ ...base, seq: index + 1, ...transition })}\n`),
     )
     process.stderr.write(
-      `${JSON.stringify({ ...base, seq: 2, event: 'dump_completed', phase: 'dump_finish', status: 'finished', errors: '0', warnings: '0', retries: '0', exit_code: '0', duration_ms: '1' })}\n`,
+      `${JSON.stringify({
+        ...base,
+        seq: transitions.length + 1,
+        event: 'dump_completed',
+        phase: 'dump_finish',
+        status: 'finished',
+        errors: '0',
+        warnings: '0',
+        retries: '0',
+        files: process.env.PORTEAU_FIXTURE_FILE_COUNT ?? '4',
+        exit_code: '0',
+        duration_ms: '1',
+      })}\n`,
     )
     process.exit(0)
   }
@@ -74,6 +99,7 @@ if (mode !== '0' && Number.isNaN(Number.parseInt(mode, 10))) {
       warnings: '0',
       errors: '0',
       retries: '0',
+      files: '0',
       exit_code: '0',
       duration_ms: '42',
     })

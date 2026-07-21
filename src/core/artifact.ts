@@ -52,12 +52,22 @@ function sectionBody(metadata: string, heading: string): string | undefined {
 export async function verifyMydumperArtifact(
   rootPath: string,
   tables: readonly ResolvedTable[],
-  options: { readonly triggers?: boolean; readonly signal?: AbortSignal } = {},
+  options: {
+    readonly triggers?: boolean
+    readonly signal?: AbortSignal
+    readonly expectedFiles?: number
+  } = {},
 ): Promise<void> {
   if (options.signal?.aborted) throw new Error('Artifact verification cancelled')
   const root = await realpath(rootPath)
   const entries = await readdir(root, { withFileTypes: true })
+  if (entries.some((entry) => !entry.isFile()))
+    throw new Error('Artifact top-level entries must all be regular files')
   const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name)
+  if (options.expectedFiles !== undefined && files.length !== options.expectedFiles)
+    throw new Error(
+      `Artifact file count disagrees with native completion: expected ${options.expectedFiles}, found ${files.length}`,
+    )
   await validateArtifact(root, () => files.filter((file) => file !== 'metadata'))
   const metadata = await readFile(resolve(root, 'metadata'), 'utf8')
 

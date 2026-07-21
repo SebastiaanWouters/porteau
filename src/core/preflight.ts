@@ -76,24 +76,27 @@ function productOf(version: string, comment: string): ServerProduct {
   if (version.startsWith('8.')) return 'mysql'
   throw new Error('Unsupported or unrecognized MySQL server product/version')
 }
-function parsePrivileges(rows: readonly unknown[]): string[] {
-  const joined = rows
-    .flatMap((row) => Object.values(row as Row))
-    .map(text)
-    .join(' ')
-    .toUpperCase()
-  if (/\bALL PRIVILEGES\s+ON\s+\*\.\*/u.test(joined)) return ['ALL PRIVILEGES']
-  return [
-    'SELECT',
-    'RELOAD',
-    'PROCESS',
-    'BACKUP_ADMIN',
-    'LOCK TABLES',
-    'REPLICATION CLIENT',
-    'SHOW VIEW',
-    'TRIGGER',
-    'EVENT',
-  ].filter((p) => joined.includes(p))
+interface Grant {
+  readonly privileges: ReadonlySet<string>
+  readonly database?: string
+}
+function parseGrants(rows: readonly unknown[]): Grant[] {
+  const grants: Grant[] = []
+  for (const row of rows) {
+    for (const value of Object.values(row as Row)) {
+      if (typeof value !== 'string') continue
+      const match = /^GRANT\s+(.+?)\s+ON\s+(\*\.\*|`(?:``|[^`])+`\.\*)\s+TO\s+/iu.exec(value)
+      if (!match) continue
+      const privileges = match[1]!.split(',').map((item) => item.trim().toUpperCase())
+      if (privileges.some((item) => !/^[A-Z_]+(?: [A-Z_]+)*$/u.test(item))) continue
+      const scope = match[2]!
+      grants.push({
+        privileges: new Set(privileges),
+        ...(scope === '*.*' ? {} : { database: scope.slice(1, -3).replaceAll('``', '`') }),
+      })
+    }
+  }
+  return grants
 }
 
 export async function runBackupPreflight(request: PreflightRequest): Promise<PreflightReport> {
@@ -149,20 +152,30 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
       )
 
     const grantRows = await query('SHOW GRANTS')
-    const privileges = parsePrivileges(grantRows)
-    const required =
-      product === 'mysql'
-        ? ['SELECT', 'RELOAD', 'PROCESS', 'BACKUP_ADMIN']
-        : ['SELECT', 'RELOAD', 'PROCESS', 'LOCK TABLES']
-    if (request.config.objects.views) required.push('SHOW VIEW')
-    if (request.config.objects.triggers) required.push('TRIGGER')
-    if (request.config.objects.events) required.push('EVENT')
-    if (profile === 'replica') required.push('REPLICATION CLIENT')
-    const absent = privileges.includes('ALL PRIVILEGES')
-      ? []
-      : required.filter((item) => !privileges.includes(item))
+    const grants = parseGrants(grantRows)
+    const has = (privilege: string, database?: string) =>
+      grants.some(
+        (grant) =>
+          (grant.database === undefined || grant.database === database) &&
+          (grant.privileges.has(privilege) || grant.privileges.has('ALL PRIVILEGES')),
+      )
+    const globalRequired =
+      product === 'mysql' ? ['RELOAD', 'PROCESS', 'BACKUP_ADMIN'] : ['RELOAD', 'PROCESS']
+    if (profile === 'replica') globalRequired.push('REPLICATION CLIENT')
+    const dataRequired = ['SELECT']
+    if (product === 'mariadb') dataRequired.push('LOCK TABLES')
+    if (request.config.objects.views) dataRequired.push('SHOW VIEW')
+    if (request.config.objects.triggers) dataRequired.push('TRIGGER')
+    if (request.config.objects.events) dataRequired.push('EVENT')
+    const absent = [
+      ...globalRequired.filter((privilege) => !has(privilege)),
+      ...dataRequired.filter((privilege) =>
+        request.databases.some((database) => !has(privilege, database)),
+      ),
+    ]
     if (absent.length > 0)
       throw new Error(`Insufficient privileges for safe lock strategy: ${absent.join(', ')}`)
+    const privileges = [...new Set(grants.flatMap((grant) => [...grant.privileges]))]
     const variablesRow = first(
       await query(product === 'mysql' ? MYSQL_VARIABLES_SQL : MARIADB_VARIABLES_SQL),
     )

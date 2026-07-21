@@ -86,6 +86,18 @@ describe('credentials defaults file', () => {
     await expect(lstat(file.path)).rejects.toThrow()
     expect(() => escapeDefaultsValue('bad\0value')).toThrow(/NUL/)
   })
+
+  it('maps preferred TLS to native REQUIRED', async () => {
+    const file = await createCredentialsDefaultsFile({
+      host: 'localhost',
+      port: 3306,
+      user: 'u',
+      password: 'p',
+      tls: 'preferred',
+    })
+    expect(await readFile(file.path, 'utf8')).toContain('ssl-mode=REQUIRED')
+    await file.cleanup()
+  })
 })
 
 describe('table filters', () => {
@@ -119,6 +131,14 @@ describe('table filters', () => {
       { ...catalog[0], serialized: '`app`.`users`', scope: 'SCHEMA' },
       { ...catalog[1], serialized: '`app`.`cache_1`', scope: 'DATA' },
     ])
+  })
+
+  it('rejects DATA-only views and dollar signs in artifact identifiers', () => {
+    const view = { database: 'app', table: 'summary', kind: 'view' as const }
+    expect(() => resolveObjectScopes([view], { schema: ['app.summary'], data: [] })).toThrow(
+      /Views cannot use DATA-only/,
+    )
+    expect(() => assertArtifactSafeIdentifiers([{ database: 'app', table: 'price$' }])).toThrow()
   })
 
   it('writes concrete non-ALL object scopes to the protected defaults file', async () => {
@@ -182,5 +202,8 @@ describe('artifact validation', () => {
     await expect(
       verifyMydumperArtifact(root, [table], { triggers: false }),
     ).resolves.toBeUndefined()
+    await expect(
+      verifyMydumperArtifact(root, [table], { triggers: false, expectedFiles: 99 }),
+    ).rejects.toThrow(/file count disagrees/)
   })
 })

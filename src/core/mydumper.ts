@@ -18,6 +18,7 @@ const decimals = [
   'total',
   'exit_code',
   'duration_ms',
+  'files',
 ] as const
 
 function requiredString(record: JsonRecord, name: string): string {
@@ -138,6 +139,7 @@ export function parseMachineEvent(line: string, expectedTool: MachineTool): Engi
     const errors = requiredDecimal(record, 'errors')
     const warnings = requiredDecimal(record, 'warnings')
     const retries = requiredDecimal(record, 'retries')
+    const files = requiredDecimal(record, 'files')
     const duration = decimal(record, 'duration_ms')
     if (!Number.isSafeInteger(Number(exitCode)))
       throw new Error('Invalid machine event field: exit_code')
@@ -150,6 +152,7 @@ export function parseMachineEvent(line: string, expectedTool: MachineTool): Engi
       errors,
       warnings,
       retries,
+      files,
       ...(duration === undefined ? {} : { durationMs: Number(duration) }),
     } as EngineEvent
   }

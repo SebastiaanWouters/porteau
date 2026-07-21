@@ -38,7 +38,11 @@ export async function createCredentialsDefaultsFile(
     `port=${credentials.port}`,
     `user=${escapeDefaultsValue(credentials.user)}`,
     `password=${escapeDefaultsValue(credentials.password)}`,
-    ...(credentials.tls ? [`ssl-mode=${credentials.tls.replace('-', '_').toUpperCase()}`] : []),
+    ...(credentials.tls
+      ? [
+          `ssl-mode=${credentials.tls === 'preferred' ? 'REQUIRED' : credentials.tls.replace('-', '_').toUpperCase()}`,
+        ]
+      : []),
     ...sections,
     '',
   ].join('\n')

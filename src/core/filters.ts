@@ -60,7 +60,7 @@ export function assertArtifactSafeIdentifiers(tables: readonly TableIdentifier[]
       ['database', database],
       ['table', table],
     ] as const) {
-      if (!/^[A-Za-z0-9_$-]+$/u.test(value) || value.startsWith('mydumper_'))
+      if (!/^[A-Za-z0-9_-]+$/u.test(value) || value.startsWith('mydumper_'))
         throw new Error(`Unsupported ${kind} name for verifiable mydumper artifacts: ${value}`)
     }
   }
@@ -92,6 +92,8 @@ export function resolveObjectScopes(
     const schema = noSchema.has(serialized)
     const data = noData.has(serialized)
     if (schema && data) return []
+    if (schema && 'kind' in table && table.kind === 'view')
+      throw new Error(`Views cannot use DATA-only object scope: ${serialized}`)
     return [{ ...table, serialized, scope: schema ? 'DATA' : data ? 'SCHEMA' : 'ALL' }]
   })
 }

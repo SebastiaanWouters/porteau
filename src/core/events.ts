@@ -78,6 +78,7 @@ export const engineEventSchema = v.variant('type', [
     errors: decimalCounterSchema,
     warnings: decimalCounterSchema,
     retries: decimalCounterSchema,
+    files: decimalCounterSchema,
     durationMs: v.optional(countSchema),
   }),
 ])

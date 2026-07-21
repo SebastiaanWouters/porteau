@@ -81,13 +81,50 @@ describe('configuration contract', () => {
   it.each(['invalid', ''])('rejects an invalid environment port %j', async (port) => {
     await expect(
       loadConfig({ cwd: await createWorkspace(), env: { PORTEAU_PORT: port } }),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/Invalid value at connection\.port/)
+  })
+
+  it('does not retain invalid configuration values in validation errors', async () => {
+    const secret = 'distinctive-invalid-password-8ba1'
+    let failure: unknown
+    try {
+      await loadConfig({
+        cwd: await createWorkspace(),
+        env: {},
+        flags: { connection: { password: { secret } } },
+      })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(Error)
+    expect(String(failure)).toContain('connection.password')
+    expect(JSON.stringify(failure)).not.toContain(secret)
+    expect(String(failure)).not.toContain(secret)
+  })
+
+  it('redacts malformed YAML source and unknown strict-object keys', async () => {
+    const secret = 'distinctive-config-source-secret-c291'
+    const malformed = await createWorkspace({
+      'porteau.config.yaml': `connection:\n  password: ${secret}\n  broken: *missing\n`,
+    })
+    await expect(loadConfig({ cwd: malformed, env: {} })).rejects.toThrow(
+      /^Unable to load Porteau configuration$/,
+    )
+
+    let strictFailure: unknown
+    try {
+      await loadConfig({ cwd: await createWorkspace(), env: {}, flags: { [secret]: true } })
+    } catch (error) {
+      strictFailure = error
+    }
+    expect(String(strictFailure)).toContain('unknown key')
+    expect(String(strictFailure)).not.toContain(secret)
   })
 
   it('requires an explicitly selected config file to exist', async () => {
     await expect(
       loadConfig({ cwd: await createWorkspace(), configFile: 'missing.yaml', env: {} }),
-    ).rejects.toThrow(/cannot be resolved/)
+    ).rejects.toThrow(/Unable to load Porteau configuration/)
   })
 
   it('accepts only YAML configuration paths', async () => {

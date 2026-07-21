@@ -110,9 +110,20 @@ export interface LoadConfigOptions {
 }
 
 type ConfigRecord = Record<string, unknown>
+const safeValidationMessages = new Set([
+  'The selected profile has an unsafe or unqualified consistency configuration',
+  'CA-verified TLS requires certificate configuration that is not available yet',
+])
 
 function isConfigRecord(value: unknown): value is ConfigRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function sanitizedIssueMessage(issue: v.BaseIssue<unknown>): string {
+  if (safeValidationMessages.has(issue.message)) return issue.message
+  if (issue.type === 'strict_object') return 'Configuration contains an unknown key'
+  const path = issue.path?.map((item) => String(item.key)).join('.')
+  return path ? `Invalid value at ${path}` : 'Invalid configuration value'
 }
 
 function mergeValue(higher: unknown, lower: unknown): unknown {
@@ -160,21 +171,34 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Porte
 
   const environment = configFromEnvironment(options.env ?? process.env)
   const overrides = mergeConfig(options.flags ?? {}, environment)
-  const loaded = await loadC12Config<Record<string, unknown>>({
-    name: 'porteau',
-    configFile: options.configFile ?? 'porteau.config.yaml',
-    configFileRequired: options.configFile !== undefined,
-    ...(options.cwd ? { cwd: options.cwd } : {}),
-    defaultConfig,
-    overrides,
-    rcFile: false,
-    globalRc: false,
-    packageJson: false,
-    envName: false,
-    extend: false,
-    giget: false,
-    merger: mergeConfig,
-  })
+  let loaded
+  try {
+    loaded = await loadC12Config<Record<string, unknown>>({
+      name: 'porteau',
+      configFile: options.configFile ?? 'porteau.config.yaml',
+      configFileRequired: options.configFile !== undefined,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      defaultConfig,
+      overrides,
+      rcFile: false,
+      globalRc: false,
+      packageJson: false,
+      envName: false,
+      extend: false,
+      giget: false,
+      merger: mergeConfig,
+    })
+  } catch {
+    throw new Error('Unable to load Porteau configuration')
+  }
 
-  return v.parse(configSchema, loaded.config)
+  try {
+    return v.parse(configSchema, loaded.config)
+  } catch (error) {
+    if (v.isValiError(error)) {
+      const messages = [...new Set(error.issues.map(sanitizedIssueMessage))]
+      throw new Error(`Invalid Porteau configuration: ${messages.join('; ')}`)
+    }
+    throw error
+  }
 }
