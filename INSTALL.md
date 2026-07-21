@@ -1,6 +1,6 @@
 # Installing Porteau
 
-Porteau requires Node.js 22.18 or newer and the **matching pinned** `mydumper` and `myloader` release. The standalone installer currently selects Node.js 24 and mydumper/myloader 1.0.3-1.
+Porteau requires Node.js 22.18 or newer and matching `mydumper` and `myloader` versions at 1.0.3-1 or newer. The standalone installer currently selects Node.js 24 and the reviewed mydumper/myloader 1.0.3-1 package.
 
 ## Supported automated setup
 
@@ -20,7 +20,7 @@ Node is installed from NodeSource's signed Node 24 repository when the system No
 The automated script intentionally refuses unlisted distributions, releases, and architectures. On those systems:
 
 1. Install Node.js >=22.18 with your platform's trusted package mechanism.
-2. Build or install **both** mydumper and myloader version 1.0.3-1 from the upstream mydumper release. Do not mix versions.
+2. Build or install **both** mydumper and myloader at version 1.0.3-1 or newer from the upstream mydumper releases. Do not mix versions.
 3. Put both executables on `PATH`, or configure their absolute paths in Porteau's `tools.mydumper` and `tools.myloader` settings.
 4. Run `porteau doctor`; do not run production backups until every tool and platform diagnostic is accepted.
 

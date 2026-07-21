@@ -23,7 +23,7 @@ afterEach(async () => {
 
 function toolDependencies(
   versions: Partial<Record<'mydumper' | 'myloader', string>> = {},
-): Pick<DiagnosticsOptions, 'resolve' | 'inspect'> {
+): Pick<DiagnosticsOptions, 'resolve' | 'inspect' | 'inspectCapabilities'> {
   return {
     async resolve(name) {
       return { path: `/tools/${name}`, source: 'path' }
@@ -31,6 +31,7 @@ function toolDependencies(
     async inspect(name, path) {
       return { name, path, version: versions[name] ?? '1.0.3-1' }
     },
+    async inspectCapabilities() {},
   }
 }
 
@@ -61,6 +62,56 @@ describe('read-only setup diagnostics', () => {
     })
   })
 
+  it('accepts matching native tools newer than the minimum version', async () => {
+    const result = await runDiagnostics({
+      platform: 'linux',
+      architecture: 'x64',
+      nodeVersion: 'v22.18.0',
+      readTextFile: async () => ubuntuRelease,
+      ...toolDependencies({ mydumper: '1.0.4-1', myloader: '1.0.4-1' }),
+    })
+
+    expect(result.tools.mydumper.status).toBe('ok')
+    expect(result.tools.myloader.status).toBe('ok')
+    expect(result.toolPair.status).toBe('ok')
+    expect(result.ok).toBe(true)
+  })
+
+  it('rejects individually supported tools when their versions do not match', async () => {
+    const result = await runDiagnostics({
+      platform: 'linux',
+      architecture: 'x64',
+      nodeVersion: 'v22.18.0',
+      readTextFile: async () => ubuntuRelease,
+      ...toolDependencies({ mydumper: '1.0.4-1', myloader: '1.0.3-1' }),
+    })
+
+    expect(result.tools.mydumper.status).toBe('ok')
+    expect(result.tools.myloader.status).toBe('ok')
+    expect(result.toolPair.status).toBe('error')
+    expect(result.toolPair.correction).toContain('1.0.4-1 and 1.0.3-1')
+    expect(result.ok).toBe(false)
+  })
+
+  it('rejects a version-compatible tool without machine-log support', async () => {
+    const dependencies = toolDependencies({ mydumper: '2.0.0-1', myloader: '2.0.0-1' })
+    const result = await runDiagnostics({
+      platform: 'linux',
+      architecture: 'x64',
+      nodeVersion: 'v22.18.0',
+      readTextFile: async () => ubuntuRelease,
+      ...dependencies,
+      async inspectCapabilities(name) {
+        if (name === 'myloader') throw new Error('missing capability')
+      },
+    })
+
+    expect(result.tools.mydumper.status).toBe('ok')
+    expect(result.tools.myloader).toMatchObject({ status: 'error', version: '2.0.0-1' })
+    expect(result.tools.myloader.correction).toContain('machine-log support')
+    expect(result.ok).toBe(false)
+  })
+
   it('uses Debian architecture rather than the Node runtime architecture for installation support', async () => {
     const result = await runDiagnostics({
       platform: 'linux',
@@ -89,6 +140,7 @@ describe('read-only setup diagnostics', () => {
       async inspect(name, path) {
         return { name, path, version: '1.0.2-1' }
       },
+      async inspectCapabilities() {},
     })
 
     expect(resolved).toEqual(['mydumper', 'myloader'])
@@ -142,6 +194,7 @@ describe('read-only setup diagnostics', () => {
         if (name === 'myloader') throw new Error(`hostile child echoed ${secret}`)
         return { name, path, version: '1.0.3-1' }
       },
+      async inspectCapabilities() {},
     })
 
     expect(inspectedEnvironments).toHaveLength(2)

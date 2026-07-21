@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
+  inspectToolCapabilities,
   inspectToolVersion,
+  isSupportedToolVersion,
   resolveToolInfo,
   ToolResolutionError,
   type ResolveToolOptions,
@@ -70,6 +72,7 @@ export interface DiagnosticsOptions {
   readonly readTextFile?: (path: string) => Promise<string>
   readonly resolve?: typeof resolveToolInfo
   readonly inspect?: typeof inspectToolVersion
+  readonly inspectCapabilities?: typeof inspectToolCapabilities
   readonly signal?: AbortSignal
 }
 
@@ -206,20 +209,40 @@ async function diagnoseTool(name: ToolName, options: DiagnosticsOptions): Promis
       inspectionEnvironment,
       options.signal,
     )
-    const supported = compatibilityManifest.engine.tools[name].acceptedVersions.includes(
-      inspected.version,
-    )
+    const supported = isSupportedToolVersion(name, inspected.version)
+    if (!supported)
+      return {
+        name,
+        status: 'error',
+        path: resolved.path,
+        source: resolved.source,
+        version: inspected.version,
+        correction: `Install ${name} version ${compatibilityManifest.engine.tools[name].minimumVersion} or newer.`,
+      }
+    try {
+      await (options.inspectCapabilities ?? inspectToolCapabilities)(
+        name,
+        resolved.path,
+        inspectionEnvironment,
+        options.signal,
+      )
+    } catch {
+      options.signal?.throwIfAborted()
+      return {
+        name,
+        status: 'error',
+        path: resolved.path,
+        source: resolved.source,
+        version: inspected.version,
+        correction: `${name} lacks required machine-log support; install a compatible release.`,
+      }
+    }
     return {
       name,
-      status: supported ? 'ok' : 'error',
+      status: 'ok',
       path: resolved.path,
       source: resolved.source,
       version: inspected.version,
-      ...(!supported
-        ? {
-            correction: `Install supported ${name} version ${compatibilityManifest.engine.tools[name].acceptedVersions.join(' or ')}.`,
-          }
-        : {}),
     }
   } catch {
     options.signal?.throwIfAborted()

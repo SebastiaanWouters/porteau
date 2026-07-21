@@ -1,10 +1,10 @@
 import * as v from 'valibot'
+import { compareToolVersions } from '../core/tool-version.js'
 import manifestData from './manifest.json' with { type: 'json' }
 
 const versionSchema = v.pipe(v.string(), v.regex(/^\d+\.\d+\.\d+-\d+$/))
 const digestSchema = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/))
 const machineVersionSchema = v.pipe(v.string(), v.regex(/^\d+$/))
-const versionListSchema = v.pipe(v.array(versionSchema), v.minLength(1))
 
 const manifestStructureSchema = v.strictObject({
   engine: v.strictObject({
@@ -12,8 +12,8 @@ const manifestStructureSchema = v.strictObject({
     version: versionSchema,
     downloadBaseUrl: v.pipe(v.string(), v.url()),
     tools: v.strictObject({
-      mydumper: v.strictObject({ version: versionSchema, acceptedVersions: versionListSchema }),
-      myloader: v.strictObject({ version: versionSchema, acceptedVersions: versionListSchema }),
+      mydumper: v.strictObject({ version: versionSchema, minimumVersion: versionSchema }),
+      myloader: v.strictObject({ version: versionSchema, minimumVersion: versionSchema }),
     }),
     machineLog: v.strictObject({
       schemaVersions: v.pipe(v.array(machineVersionSchema), v.minLength(1)),
@@ -60,11 +60,10 @@ export const compatibilityManifestSchema = v.pipe(
       engine.downloadBaseUrl ===
         `https://github.com/mydumper/mydumper/releases/download/${engine.tag}/` &&
       tools.every(
-        ({ version, acceptedVersions }) =>
-          version === engine.version &&
-          acceptedVersions.includes(version) &&
-          hasUniqueValues(acceptedVersions),
+        ({ version, minimumVersion }) =>
+          version === engine.version && (compareToolVersions(version, minimumVersion) ?? -1) >= 0,
       ) &&
+      tools[0]!.minimumVersion === tools[1]!.minimumVersion &&
       hasUniqueValues(engine.machineLog.schemaVersions) &&
       hasUniqueValues(engine.machineLog.eventVersions) &&
       hasUniqueValues(assetTargets) &&

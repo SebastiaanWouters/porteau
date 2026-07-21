@@ -7,6 +7,8 @@ describe('compatibility manifest', () => {
     expect(compatibilityManifest.engine.tools.mydumper.version).toBe(
       compatibilityManifest.engine.tools.myloader.version,
     )
+    expect(compatibilityManifest.engine.tools.mydumper.minimumVersion).toBe('1.0.3-1')
+    expect(compatibilityManifest.engine.tools.myloader.minimumVersion).toBe('1.0.3-1')
     expect(compatibilityManifest.engine.machineLog).toEqual({
       schemaVersions: ['1'],
       eventVersions: ['1'],
@@ -41,6 +43,24 @@ describe('compatibility manifest', () => {
         engine: {
           ...compatibilityManifest.engine,
           machineLog: { ...compatibilityManifest.engine.machineLog, schemaVersions: ['1', '1'] },
+        },
+      },
+    ],
+    [
+      'minimum tool version newer than installer version',
+      {
+        engine: {
+          ...compatibilityManifest.engine,
+          tools: {
+            mydumper: {
+              ...compatibilityManifest.engine.tools.mydumper,
+              minimumVersion: '1.0.4-1',
+            },
+            myloader: {
+              ...compatibilityManifest.engine.tools.myloader,
+              minimumVersion: '1.0.4-1',
+            },
+          },
         },
       },
     ],

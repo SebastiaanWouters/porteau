@@ -72,7 +72,7 @@ Retain JSONL and manifest evidence, monitor backup age, and schedule isolated re
 
 - Node.js 22.18 or newer; the committed CI matrix targets Node 22.18 and Node 24 and must pass before release.
 - Supported automatic-installation targets are limited to the Ubuntu releases and architectures listed in [INSTALL.md](INSTALL.md); their committed external matrices must pass before release.
-- MySQL 8.4 with the matching pinned `mydumper`/`myloader` pair is the supported integration target. Its committed guarded round trip must pass before release. Native tools remain external executables and must be diagnosed with `porteau doctor`.
+- MySQL 8.4 with a matching `mydumper`/`myloader` pair at version 1.0.3-1 or newer is the supported integration target. The automatic installer remains pinned to a reviewed release, and its committed guarded round trip must pass before release. Native tools remain external executables and must be diagnosed with `porteau doctor`.
 - Consistent production backup requires InnoDB. Selected nontransactional tables are rejected; system databases are not restore targets. Unsupported TLS certificate configuration and unlisted platforms are not silently accepted.
 - Shell completion is not provided in v1. Citty does not currently expose a stable generated-completion contract, and Porteau will not install an ad-hoc completion script that could drift from safety checks.
 

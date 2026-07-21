@@ -6,6 +6,10 @@ import { basename } from 'node:path'
 const mode = process.argv[2] ?? '0'
 
 const toolName = basename(process.argv[1])
+if (['mydumper', 'myloader'].includes(toolName) && process.argv.includes('--help')) {
+  process.stdout.write('--machine-log-json\n')
+  process.exit(0)
+}
 if (['mydumper', 'myloader'].includes(toolName) && process.argv.includes('--version')) {
   if (process.env.PORTEAU_FIXTURE_VERSION_INVOCATION)
     await writeFile(`${process.env.PORTEAU_FIXTURE_VERSION_INVOCATION}-${toolName}`, 'version')

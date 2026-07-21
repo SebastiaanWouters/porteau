@@ -7,7 +7,7 @@ setup() {
   fake="$BATS_TEST_TMPDIR/fake-bin"
   rm -rf "$fake"
   mkdir -p "$fake"
-  make_fake dpkg 'echo amd64'
+  make_fake dpkg 'if [ "$1" = --print-architecture ]; then echo amd64; else /usr/bin/dpkg "$@"; fi'
   expected_size=9624536
   if [[ "${VERSION_ID:-}" == 22.04 ]]; then
     expected_size=1627788
@@ -26,8 +26,22 @@ compatible() {
   make_fake myloader 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "myloader v1.0.3-1, built against MySQL 8.0.0 with SSL support"; fi'
 }
 
+compatible_newer() {
+  compatible
+  make_fake mydumper 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "mydumper v1.0.4-1, built against MySQL 8.0.0 with SSL support"; fi'
+  make_fake myloader 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "myloader v1.0.4-1, built against MySQL 8.0.0 with SSL support"; fi'
+}
+
 @test "compatible dependencies require no mutation" {
   compatible
+  make_fake curl 'exit 99'; make_fake sudo 'exit 98'
+  run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"All dependencies are compatible."* ]]
+}
+
+@test "matching newer tools require no mutation" {
+  compatible_newer
   make_fake curl 'exit 99'; make_fake sudo 'exit 98'
   run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --check
   [ "$status" -eq 0 ]
@@ -58,6 +72,35 @@ compatible() {
 @test "strict tool version mismatch needs installation" {
   compatible
   make_fake myloader 'echo "myloader v1.0.3, built against MySQL 8.0.0 with SSL support"'
+  run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Check only"* ]]
+}
+
+@test "supported but mismatched tools are rejected without an automatic downgrade" {
+  compatible_newer
+  make_fake myloader 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "myloader v1.0.3-1, built against MySQL 8.0.0 with SSL support"; fi'
+  make_fake curl 'echo MUTATED >&2; exit 97'; make_fake sudo 'echo MUTATED >&2; exit 96'
+  run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --yes
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"will not downgrade"* ]]
+  [[ "$output" != *MUTATED* ]]
+}
+
+@test "a newer tool with a missing peer is rejected without an automatic downgrade" {
+  compatible_newer
+  make_fake myloader 'exit 1'
+  make_fake curl 'echo MUTATED >&2; exit 97'; make_fake sudo 'echo MUTATED >&2; exit 96'
+  run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --yes
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"will not downgrade"* ]]
+  [[ "$output" != *MUTATED* ]]
+}
+
+@test "well-formed tools below the minimum need installation" {
+  compatible
+  make_fake mydumper 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "mydumper v1.0.2-99, built against MySQL 8.0.0 with SSL support"; fi'
+  make_fake myloader 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "myloader v1.0.2-99, built against MySQL 8.0.0 with SSL support"; fi'
   run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --check
   [ "$status" -eq 1 ]
   [[ "$output" == *"Check only"* ]]
@@ -126,4 +169,18 @@ compatible() {
   make_fake sudo 'exit 0'
   run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --yes
   [ "$status" -eq 1 ]; [[ "$output" == *"Post-install verification failed"* ]]
+}
+
+@test "post-install verification rejects supported but mismatched tools" {
+  compatible
+  state="$BATS_TEST_TMPDIR/installed"
+  make_fake mydumper "if [ \"\$1\" = --help ]; then echo --machine-log-json; elif [ -e '$state' ]; then echo 'mydumper v1.0.4-1, built against MySQL 8.0.0 with SSL support'; else echo 'mydumper v1.0.2-99, built against MySQL 8.0.0 with SSL support'; fi"
+  make_fake myloader "if [ \"\$1\" = --help ]; then echo --machine-log-json; elif [ -e '$state' ]; then echo 'myloader v1.0.3-1, built against MySQL 8.0.0 with SSL support'; else echo 'myloader v1.0.2-99, built against MySQL 8.0.0 with SSL support'; fi"
+  make_fake curl 'output=""; while [ "$#" -gt 0 ]; do [ "$1" = --output ] && { shift; output="$1"; }; shift; done; : >"$output"'
+  make_fake stat "echo $expected_size"
+  make_fake sha256sum 'exit 0'
+  make_fake sudo "touch '$state'"
+  run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --yes
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Post-install verification failed"* ]]
 }

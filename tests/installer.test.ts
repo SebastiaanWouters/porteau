@@ -110,6 +110,50 @@ describe('Ubuntu installer policy and execution', () => {
     ])
   })
 
+  it('refuses to downgrade a newer tool while repairing an invalid pair', () => {
+    const plan = planUbuntuInstall({
+      ...diagnostics,
+      node: { ...diagnostics.node, status: 'ok' },
+      tools: {
+        mydumper: { name: 'mydumper', status: 'ok', source: 'path', version: '1.0.4-1' },
+        myloader: { name: 'myloader', status: 'ok', source: 'path', version: '1.0.3-1' },
+      },
+      toolPair: { status: 'error' },
+    })
+
+    expect(plan.nativeTools).toBe(true)
+    expect(plan.blockers).toEqual([expect.stringContaining('will not downgrade mydumper 1.0.4-1')])
+  })
+
+  it('refuses APT repair for an invalid pair selected through explicit paths', () => {
+    const plan = planUbuntuInstall({
+      ...diagnostics,
+      node: { ...diagnostics.node, status: 'ok' },
+      tools: {
+        mydumper: {
+          name: 'mydumper',
+          status: 'ok',
+          source: 'config',
+          path: '/configured/mydumper',
+          version: '01.0.3-1',
+        },
+        myloader: {
+          name: 'myloader',
+          status: 'ok',
+          source: 'config',
+          path: '/configured/myloader',
+          version: '1.0.3-1',
+        },
+      },
+      toolPair: { status: 'error' },
+    })
+
+    expect(plan.blockers).toEqual([
+      expect.stringContaining('explicit mydumper config path remains authoritative'),
+      expect.stringContaining('explicit myloader config path remains authoritative'),
+    ])
+  })
+
   it('does not begin another operation after cancellation and still cleans up', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'porteau-abort-installer-test-'))
     const controller = new AbortController()
@@ -232,6 +276,61 @@ describe('Ubuntu installer policy and execution', () => {
     expect(commands).toContain('node --version')
     expect(commands).toContain('npm --version')
     expect(commands.at(-1)).toBe('myloader --help')
+    expect(remove).toHaveBeenCalledWith(directory)
+  })
+
+  it('rejects mismatched tools during post-install verification', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'porteau-mismatch-installer-test-'))
+    const remove = vi.fn((path: string) => rm(path, { recursive: true, force: true }))
+    await expect(
+      executeInstallPlan(
+        planUbuntuInstall({
+          ...diagnostics,
+          tools: {
+            mydumper: { name: 'mydumper', status: 'ok', version: '1.0.4-1' },
+            myloader: { name: 'myloader', status: 'ok', version: '1.0.4-1' },
+          },
+          toolPair: { status: 'ok' },
+        }),
+        approvedInstall,
+        {
+          makeTemporaryDirectory: async () => directory,
+          async download(_url, path) {
+            await writeFile(path, 'test key')
+          },
+          async run(command, args) {
+            if (command === 'gpg' && args.includes('--show-keys'))
+              return {
+                stdout:
+                  'pub:::::::::6F71F525282841EE:\nfpr:::::::::6F71F525282841EEDAF851B42F59B5F99B1BE0B4:\n',
+              }
+            if (command === 'gpg' && args.includes('--dearmor'))
+              await writeFile(args[args.indexOf('--output') + 1]!, 'keyring')
+            if (command === 'node') return { stdout: 'v24.1.0\n' }
+            if (command === 'npm') return { stdout: '11.0.0\n' }
+            if (command === 'mydumper')
+              return args.includes('--help')
+                ? { stdout: '--machine-log-json\n' }
+                : {
+                    stdout: 'mydumper v1.0.4-1, built against MySQL 8.0.0 with SSL support\n',
+                  }
+            if (command === 'myloader')
+              return args.includes('--help')
+                ? { stdout: '--machine-log-json\n' }
+                : {
+                    stdout: 'myloader v1.0.3-1, built against MySQL 8.0.0 with SSL support\n',
+                  }
+            if (command === 'apt-cache')
+              return {
+                stdout:
+                  ' nodejs | 24.1.0-1nodesource1 | https://deb.nodesource.com/node_24.x nodistro/main amd64 Packages\n',
+              }
+            return { stdout: '' }
+          },
+          remove,
+        },
+      ),
+    ).rejects.toThrow('Post-install dependency verification failed')
     expect(remove).toHaveBeenCalledWith(directory)
   })
 })

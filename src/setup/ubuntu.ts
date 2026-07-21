@@ -4,7 +4,12 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { parseToolVersion } from '../core/tools.js'
+import { compareToolVersions } from '../core/tool-version.js'
+import {
+  assertMatchingToolVersions,
+  isSupportedToolVersion,
+  parseToolVersion,
+} from '../core/tools.js'
 import { compatibilityManifest, type CompatibilityManifest } from './manifest.js'
 import {
   minimumNodeVersion,
@@ -43,9 +48,9 @@ export function planUbuntuInstall(
       )
     : undefined
   const managed = ['NVM_DIR', 'ASDF_DIR', 'MISE_DATA_DIR', 'VOLTA_HOME'].filter((name) => env[name])
-  const blockers = (['mydumper', 'myloader'] as const).flatMap((name) => {
+  const explicitPathBlockers = (['mydumper', 'myloader'] as const).flatMap((name) => {
     const tool = diagnostics.tools[name]
-    return tool.status === 'error' &&
+    return diagnostics.toolPair.status === 'error' &&
       tool.path &&
       ['config', 'environment'].includes(tool.source ?? '')
       ? [
@@ -53,6 +58,17 @@ export function planUbuntuInstall(
         ]
       : []
   })
+  const downgradeBlockers =
+    diagnostics.toolPair.status === 'error'
+      ? (['mydumper', 'myloader'] as const).flatMap((name) => {
+          const version = diagnostics.tools[name].version
+          return version && compareToolVersions(version, compatibilityManifest.engine.version) === 1
+            ? [
+                `Automatic setup will not downgrade ${name} ${version} to the reviewed ${compatibilityManifest.engine.version} package; install a matching supported tool pair manually.`,
+              ]
+            : []
+        })
+      : []
   return {
     supported: Boolean(asset),
     node: diagnostics.node.status !== 'ok',
@@ -63,7 +79,7 @@ export function planUbuntuInstall(
           `User-managed Node environment detected (${managed.join(', ')}); system Node will not replace its shims.`,
         ]
       : [],
-    blockers,
+    blockers: [...explicitPathBlockers, ...downgradeBlockers],
   }
 }
 
@@ -174,15 +190,17 @@ async function verifyInstalledDependencies(dependencies: InstallerDependencies):
     const npm = await dependencies.run('npm', ['--version'])
     if (!nodeVersionSupported(node.stdout) || !/^\d+\.\d+\.\d+\r?\n?$/u.test(npm.stdout))
       throw new Error('invalid Node.js or npm version')
+    const tools = []
     for (const name of ['mydumper', 'myloader'] as const) {
       const inspected = await dependencies.run(name, ['--version'])
       const version = parseToolVersion(name, `${inspected.stdout}${inspected.stderr ?? ''}`)
-      if (!compatibilityManifest.engine.tools[name].acceptedVersions.includes(version))
-        throw new Error(`unsupported ${name} version`)
+      if (!isSupportedToolVersion(name, version)) throw new Error(`unsupported ${name} version`)
       const help = await dependencies.run(name, ['--help'])
       if (!`${help.stdout}${help.stderr ?? ''}`.includes('--machine-log-json'))
         throw new Error(`${name} lacks machine logging`)
+      tools.push({ name, path: name, version })
     }
+    assertMatchingToolVersions(tools[0]!, tools[1]!)
   } catch {
     throw new Error('Post-install dependency verification failed')
   }

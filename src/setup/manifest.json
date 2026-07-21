@@ -6,11 +6,11 @@
     "tools": {
       "mydumper": {
         "version": "1.0.3-1",
-        "acceptedVersions": ["1.0.3-1"]
+        "minimumVersion": "1.0.3-1"
       },
       "myloader": {
         "version": "1.0.3-1",
-        "acceptedVersions": ["1.0.3-1"]
+        "minimumVersion": "1.0.3-1"
       }
     },
     "machineLog": {

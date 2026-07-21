@@ -15,7 +15,8 @@ import {
   resolveObjectScopes,
   serializeDefaultsSection,
 } from '../src/core/filters.js'
-import { parseToolVersion, resolveTool } from '../src/core/tools.js'
+import { compareToolVersions } from '../src/core/tool-version.js'
+import { isSupportedToolVersion, parseToolVersion, resolveTool } from '../src/core/tools.js'
 
 const temporaryDirectories: string[] = []
 async function temporaryDirectory(prefix: string): Promise<string> {
@@ -68,6 +69,22 @@ describe('native tool resolution', () => {
     ).toBe('1.0.3-1')
     expect(() => parseToolVersion('myloader', 'prefix myloader v1.0.3-1\n')).toThrow()
     expect(() => parseToolVersion('myloader', 'mydumper v1.0.3-1\n')).toThrow()
+  })
+
+  it('accepts native tool versions at or above the supported minimum', () => {
+    expect(isSupportedToolVersion('mydumper', '1.0.2-99')).toBe(false)
+    expect(isSupportedToolVersion('mydumper', '1.0.3-0')).toBe(false)
+    expect(isSupportedToolVersion('mydumper', '1.0.3-1')).toBe(true)
+    expect(isSupportedToolVersion('mydumper', '1.0.4-1')).toBe(true)
+    expect(isSupportedToolVersion('myloader', '2.0.0-1')).toBe(true)
+    expect(isSupportedToolVersion('myloader', 'invalid')).toBe(false)
+  })
+
+  it('compares arbitrarily large numeric tool version components exactly', () => {
+    expect(compareToolVersions('1.0.3-9007199254740992', '1.0.3-9007199254740993')).toBe(-1)
+    expect(compareToolVersions('1.0.3-999999999999999999999999', '1.0.3-4')).toBe(1)
+    expect(compareToolVersions('01.000.0003-0001', '1.0.3-1')).toBe(0)
+    expect(compareToolVersions('invalid', '1.0.3-1')).toBeUndefined()
   })
 })
 

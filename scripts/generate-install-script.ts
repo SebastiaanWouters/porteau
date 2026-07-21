@@ -41,12 +41,17 @@ case "\${VERSION_ID:-}/\${VERSION_CODENAME:-}/$ARCH" in
 ${cases}
   *) echo 'Supported targets: ${supportedTargetDescription}.' >&2; exit 1 ;;
 esac
-version_ok() { local v; command -v "$1" >/dev/null 2>&1 || return 1; v="$($1 --version 2>&1)"; [[ "$v" =~ ^$1\\ v([0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+),\\ built\\ against\\ [^$'\\r\\n']+(\\ with\\ SSL\\ support)?$ ]] && [[ "\${BASH_REMATCH[1]}" == "$2" ]]; }
+tool_version() { local v; command -v "$1" >/dev/null 2>&1 || return 1; v="$($1 --version 2>&1)"; [[ "$v" =~ ^$1\\ v([0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+),\\ built\\ against\\ [^$'\\r\\n']+(\\ with\\ SSL\\ support)?$ ]] || return 1; printf '%s' "\${BASH_REMATCH[1]}"; }
+version_at_least() { [[ -n "$1" ]] && dpkg --compare-versions "$1" ge "$2"; }
 machine_ok() { local help; help="$("$1" --help 2>&1)" && [[ "$help" == *--machine-log-json* ]]; }
+tool_pair_ok() { version_at_least "$1" '${compatibilityManifest.engine.tools.mydumper.minimumVersion}' && version_at_least "$2" '${compatibilityManifest.engine.tools.myloader.minimumVersion}' && [[ "$1" == "$2" ]] && machine_ok mydumper && machine_ok myloader; }
 node_ok() { local npm_version; command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 && node -e 'const a=process.versions.node.split(".").map(Number),m="${minimumNodeVersion}".split(".").map(Number);process.exit(a[0]>m[0]||(a[0]===m[0]&&(a[1]>m[1]||(a[1]===m[1]&&a[2]>=m[2])))?0:1)' && npm_version="$(npm --version 2>/dev/null)" && [[ "$npm_version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] ; }
 NODE=0 TOOLS=0; node_ok || NODE=1
-if ! version_ok mydumper '${compatibilityManifest.engine.version}' || ! machine_ok mydumper; then TOOLS=1; fi
-if ! version_ok myloader '${compatibilityManifest.engine.version}' || ! machine_ok myloader; then TOOLS=1; fi
+MYDUMPER_VERSION="$(tool_version mydumper || true)"
+MYLOADER_VERSION="$(tool_version myloader || true)"
+tool_pair_ok "$MYDUMPER_VERSION" "$MYLOADER_VERSION" || TOOLS=1
+BLOCKED_DOWNGRADE=0
+if (( TOOLS )) && { { [[ -n "$MYDUMPER_VERSION" ]] && dpkg --compare-versions "$MYDUMPER_VERSION" gt '${compatibilityManifest.engine.version}'; } || { [[ -n "$MYLOADER_VERSION" ]] && dpkg --compare-versions "$MYLOADER_VERSION" gt '${compatibilityManifest.engine.version}'; }; }; then BLOCKED_DOWNGRADE=1; fi
 echo 'Porteau Ubuntu dependency plan'
 if (( NODE )); then
   echo '  Node.js target: ${nodeTargetMajor} from the third-party NodeSource repository'
@@ -65,6 +70,7 @@ if (( TOOLS )); then
   echo "  sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes ./$ASSET (from the verified temporary directory)"
 fi
 for marker in NVM_DIR ASDF_DIR MISE_DATA_DIR VOLTA_HOME; do [[ -n "\${!marker:-}" ]] && echo "  Warning: user-managed Node detected ($marker); system Node will not replace its shims."; done
+(( BLOCKED_DOWNGRADE )) && { echo "Automatic setup will not downgrade detected native tools ($MYDUMPER_VERSION / $MYLOADER_VERSION) to ${compatibilityManifest.engine.version}; install a matching supported pair manually." >&2; exit 1; }
 (( NODE || TOOLS )) || { echo 'All dependencies are compatible.'; exit 0; }
 (( CHECK )) && { echo 'Check only: no changes made.'; exit 1; }
 if (( ! YES )); then
@@ -97,7 +103,9 @@ if (( NODE )); then
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "nodejs=$CANDIDATE"
 fi
 (( TOOLS )) && (cd "$TMP" && sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "./$ASSET")
-if ! node_ok || ! version_ok mydumper '${compatibilityManifest.engine.version}' || ! machine_ok mydumper || ! version_ok myloader '${compatibilityManifest.engine.version}' || ! machine_ok myloader; then
+MYDUMPER_VERSION="$(tool_version mydumper || true)"
+MYLOADER_VERSION="$(tool_version myloader || true)"
+if ! node_ok || ! tool_pair_ok "$MYDUMPER_VERSION" "$MYLOADER_VERSION"; then
   echo 'Post-install verification failed.' >&2
   exit 1
 fi

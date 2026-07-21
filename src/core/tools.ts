@@ -4,6 +4,7 @@ import { delimiter, isAbsolute, join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { compatibilityManifest } from '../setup/manifest.js'
+import { compareToolVersions } from './tool-version.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -96,6 +97,12 @@ export function parseToolVersion(name: ToolName, output: string): string {
   return match[1]
 }
 
+export function isSupportedToolVersion(name: ToolName, version: string): boolean {
+  const minimum = compatibilityManifest.engine.tools[name].minimumVersion
+  const comparison = compareToolVersions(version, minimum)
+  return comparison !== undefined && comparison >= 0
+}
+
 export async function inspectToolVersion(
   name: ToolName,
   path: string,
@@ -115,6 +122,24 @@ export async function inspectToolVersion(
   return { name, path, version }
 }
 
+export async function inspectToolCapabilities(
+  name: ToolName,
+  path: string,
+  env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!isAbsolute(path)) throw new Error(`${name} path must be absolute`)
+  const { stdout, stderr } = await execFileAsync(path, ['--help'], {
+    encoding: 'utf8',
+    shell: false,
+    timeout: 10_000,
+    ...(env ? { env } : {}),
+    ...(signal ? { signal } : {}),
+  })
+  if (!`${stdout}${stderr}`.includes('--machine-log-json'))
+    throw new Error(`${name} lacks machine-log support`)
+}
+
 export async function inspectTool(
   name: ToolName,
   path: string,
@@ -123,9 +148,10 @@ export async function inspectTool(
 ): Promise<InspectedTool> {
   const inspected = await inspectToolVersion(name, path, env, signal)
   const { version } = inspected
-  if (!compatibilityManifest.engine.tools[name].acceptedVersions.includes(version)) {
+  if (!isSupportedToolVersion(name, version)) {
     throw new Error(`Unsupported ${name} version: ${version}`)
   }
+  await inspectToolCapabilities(name, path, env, signal)
   return inspected
 }
 
