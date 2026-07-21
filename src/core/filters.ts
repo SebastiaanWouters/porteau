@@ -3,7 +3,7 @@ export interface TableIdentifier {
   readonly table: string
 }
 
-export type ObjectScope = 'ALL' | 'DATA' | 'SCHEMA'
+export type ObjectScope = 'ALL' | 'SCHEMA'
 export interface ResolvedTable extends TableIdentifier {
   readonly scope: ObjectScope
   readonly serialized: string
@@ -83,17 +83,13 @@ export function expandTablePatterns(
 
 export function resolveObjectScopes(
   catalog: readonly TableIdentifier[],
-  exclude: { readonly schema: readonly string[]; readonly data: readonly string[] },
+  exclude: { readonly tables: readonly string[]; readonly data: readonly string[] },
 ): ResolvedTable[] {
-  const noSchema = new Set(expandTablePatterns(exclude.schema, catalog).map(serializeTable))
+  const omitted = new Set(expandTablePatterns(exclude.tables, catalog).map(serializeTable))
   const noData = new Set(expandTablePatterns(exclude.data, catalog).map(serializeTable))
   return catalog.flatMap((table) => {
     const serialized = serializeTable(table)
-    const schema = noSchema.has(serialized)
-    const data = noData.has(serialized)
-    if (schema && data) return []
-    if (schema && 'kind' in table && table.kind === 'view')
-      throw new Error(`Views cannot use DATA-only object scope: ${serialized}`)
-    return [{ ...table, serialized, scope: schema ? 'DATA' : data ? 'SCHEMA' : 'ALL' }]
+    if (omitted.has(serialized)) return []
+    return [{ ...table, serialized, scope: noData.has(serialized) ? 'SCHEMA' : 'ALL' }]
   })
 }

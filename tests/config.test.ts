@@ -61,7 +61,7 @@ describe('configuration contract', () => {
     const cwd = await createWorkspace({
       'porteau.config.yaml': [
         'exclude:',
-        '  schema: ["db.file_only"]',
+        '  tables: ["db.file_only"]',
         'backup:',
         '  throttle:',
         '    threshold: 10',
@@ -71,11 +71,21 @@ describe('configuration contract', () => {
     const config = await loadConfig({
       cwd,
       env: {},
-      flags: { exclude: { schema: [] }, backup: { throttle: { threshold: null } } },
+      flags: { exclude: { tables: [] }, backup: { throttle: { threshold: null } } },
     })
 
-    expect(config.exclude.schema).toEqual([])
+    expect(config.exclude.tables).toEqual([])
     expect(config.backup.throttle.threshold).toBeNull()
+  })
+
+  it('rejects the legacy data-only exclusion with migration guidance', async () => {
+    const cwd = await createWorkspace({
+      'porteau.config.yaml': 'exclude:\n  schema: ["db.data_only"]\n',
+    })
+
+    await expect(loadConfig({ cwd, env: {} })).rejects.toThrow(
+      /exclude\.schema is unsupported.*exclude\.tables.*exclude\.data/u,
+    )
   })
 
   it.each(['invalid', ''])('rejects an invalid environment port %j', async (port) => {

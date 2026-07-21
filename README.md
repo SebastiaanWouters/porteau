@@ -13,6 +13,8 @@ porteau backup --user backup_operator --database app --output ./backups/app-2026
 
 A backup destination must not already exist. Do not put a password in command arguments, YAML, shell history, or source control: set `PORTEAU_PASSWORD` in the process environment (ideally through a secret manager). Porteau passes native tools a short-lived defaults file rather than a password argument and removes it during cleanup.
 
+Backup filters can omit a table entirely with `exclude.tables` or retain its schema without rows with `exclude.data`. Porteau does not create data-only artifacts: every exported object includes the schema required to restore it safely into a new or staging database.
+
 Restore always resolves and discloses all three policies before approval. Command flags override YAML, which overrides Porteau's safe defaults (`require-empty`, `reject`, and `disable`):
 
 - **Destination:** `require-empty` refuses a populated destination; `allow-existing` permits one.

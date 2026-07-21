@@ -49,10 +49,13 @@ suite('Porteau against pinned MySQL and mydumper', () => {
         id BIGINT PRIMARY KEY AUTO_INCREMENT,
         value VARCHAR(80) NOT NULL
       ) ENGINE=InnoDB;
-      CREATE TABLE safe_app.omitted(id INT PRIMARY KEY) ENGINE=InnoDB;
+      CREATE TABLE safe_app.schema_only(id INT PRIMARY KEY) ENGINE=InnoDB;
+      CREATE TABLE safe_app.excluded(id INT PRIMARY KEY) ENGINE=InnoDB;
       INSERT INTO safe_app.rows(value)
         SELECT UUID() FROM information_schema.COLUMNS a, information_schema.COLUMNS b LIMIT 50000;
-      INSERT INTO safe_app.omitted VALUES (1);
+      INSERT INTO safe_app.schema_only VALUES (1);
+      INSERT INTO safe_app.excluded VALUES (1);
+      CREATE VIEW safe_app.row_view AS SELECT id, value FROM safe_app.rows WHERE id <= 10;
       CREATE DATABASE unsafe_app;
       CREATE TABLE unsafe_app.unsafe(id INT) ENGINE=MyISAM;
     `)
@@ -79,7 +82,7 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     })()
     const backupConfig = {
       ...config('safe_app', output),
-      exclude: { schema: [], data: ['safe_app.omitted'] },
+      exclude: { tables: ['safe_app.excluded'], data: ['safe_app.schema_only'] },
     }
     try {
       await runBackup({
@@ -96,8 +99,12 @@ suite('Porteau against pinned MySQL and mydumper', () => {
 
     expect(writes).toBeGreaterThan(0)
     const artifact = await readdir(output)
-    expect(artifact).toContain('safe_app.omitted-schema.sql')
-    expect(artifact.some((name) => /^safe_app\.omitted\.\d+\.sql$/u.test(name))).toBe(false)
+    expect(artifact).toContain('safe_app.schema_only-schema.sql')
+    expect(artifact.some((name) => /^safe_app\.schema_only\.\d+\.sql$/u.test(name))).toBe(false)
+    expect(artifact.some((name) => name.startsWith('safe_app.excluded'))).toBe(false)
+    expect(artifact).toEqual(
+      expect.arrayContaining(['safe_app.row_view-schema.sql', 'safe_app.row_view-schema-view.sql']),
+    )
     expect(events).toEqual(
       expect.arrayContaining([
         'lock/global_lock/started',
@@ -130,13 +137,21 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     const verify = await mysql.createConnection({ host, user: 'root', password, ssl: {} })
     const [sourceRows] = await verify.query('SELECT COUNT(*) count FROM safe_app.rows')
     const [rows] = await verify.query('SELECT COUNT(*) count FROM restored.rows')
-    const [omitted] = await verify.query('SELECT COUNT(*) count FROM restored.omitted')
+    const [schemaOnly] = await verify.query('SELECT COUNT(*) count FROM restored.schema_only')
+    const [excluded] = await verify.query(
+      "SELECT COUNT(*) count FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'restored' AND TABLE_NAME = 'excluded'",
+    )
+    const [view] = await verify.query(
+      "SELECT TABLE_TYPE tableType FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'restored' AND TABLE_NAME = 'row_view'",
+    )
     await verify.end()
     const restoredRows = Number((rows as { count: number }[])[0]!.count)
     const finalSourceRows = Number((sourceRows as { count: number }[])[0]!.count)
     expect(restoredRows).toBeGreaterThanOrEqual(initialRows)
     expect(restoredRows).toBeLessThanOrEqual(finalSourceRows)
-    expect(Number((omitted as { count: number }[])[0]!.count)).toBe(0)
+    expect(Number((schemaOnly as { count: number }[])[0]!.count)).toBe(0)
+    expect(Number((excluded as { count: number }[])[0]!.count)).toBe(0)
+    expect((view as { tableType: string }[])[0]!.tableType).toBe('VIEW')
 
     await expect(
       runRestore({

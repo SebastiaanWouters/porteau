@@ -15,7 +15,7 @@ Porteau provides:
 - A brief, bounded startup synchronization lock rather than a full-backup write lock.
 - Continued application DML during the main export phase.
 - Parallel table and chunk processing with conservative production defaults.
-- Independent schema and data inclusion/exclusion rules.
+- Per-table schema-and-data, schema-only, and full-object exclusion rules.
 - Clear progress, actionable failures, and machine-readable output.
 - Scriptable commands with optional guided prompts.
 - Guarded, parallel restores into new or staging destinations.
@@ -60,7 +60,7 @@ When zero primary write interruption is required, Porteau recommends and support
 
 Mydumper/myloader best matches Porteau’s distinguishing requirements:
 
-1. **Independent per-table object scopes.** A table can export schema, data, triggers, all objects, or nothing in one consistent run.
+1. **Safe per-table object scopes.** A table can export schema and data, schema only, or nothing in one consistent run; triggers remain an independently selected object type. Data-only table scope is prohibited.
 2. **Versioned machine output.** For the pinned binaries, `--machine-log-json` emits schema/event version 1 JSON Lines on stderr with qualified success, failure, warning, lock, progress, completion, and cancellation behavior represented by redacted fixtures.
 3. **Production controls.** It exposes lock modes, transactional-only behavior, adaptive chunking, per-table concurrency, query-duration targets, and workload-aware throttling.
 4. **Manageable artifacts.** It creates separate metadata, schema, and data files that remain inspectable and portable.
@@ -92,7 +92,7 @@ MySQL Shell remains a credible future backend, not the v1 default.
 | Maintenance | Community maintained | Oracle maintained |
 | Output | SQL-oriented schema/data artifacts | SQL DDL plus loader-oriented text chunks |
 
-Porteau’s `exclude.schema` and `exclude.data` rules are decisive. Reproducing them with MySQL Shell would require separate operations with global `ddlOnly`/`dataOnly` behavior, which would not naturally share one snapshot.
+Porteau’s per-table `exclude.tables` and `exclude.data` rules are decisive. Reproducing schema-only table scopes with MySQL Shell would require separate operations with global `ddlOnly` behavior, which would not naturally share one snapshot. Data-only artifacts are prohibited because they cannot be restored safely into Porteau's default new/staging destination without relying on an externally managed compatible schema.
 
 Do not claim mydumper is universally faster. Both engines are parallel; performance depends on schema shape, primary keys, compression, storage, network, source capacity, and destination configuration.
 
@@ -255,7 +255,7 @@ Porteau must not, by default:
 Before spawning mydumper, query the selected table catalog and classify:
 
 - InnoDB base tables: allowed in `production`.
-- Views: schema-exported or excluded; DATA-only view scope is unsupported.
+- Views: schema-exported or excluded; data-only scope is not representable for any object.
 - Nontransactional tables: rejected in `production` with maintenance/replica guidance.
 - Missing tables/patterns: validation error unless an explicit ignore-missing policy is selected.
 - Tables without a useful primary/unique key: allowed, but warn that within-table parallelism may be limited.
@@ -347,11 +347,11 @@ Warnings are preserved and displayed but do not automatically become success. Sp
 
 ## 7. Schema/data filtering
 
-Porteau retains its independent YAML lists:
+Porteau supports full-object and data exclusions:
 
 ```yaml
 exclude:
-  schema:
+  tables:
     - "mydb.sessions"
     - "mydb.cache_*"
   data:
@@ -364,11 +364,10 @@ Expand patterns against the preflight table catalog and resolve one scope per ta
 | Porteau result | mydumper `object_to_export` |
 |---|---|
 | Include schema and data | `ALL` |
-| Exclude schema only | `DATA` |
-| Exclude data only | `SCHEMA` |
-| Exclude both | `NONE` or omit table |
+| Exclude data | `SCHEMA` |
+| Exclude table | `NONE` or omit table |
 
-This mapping must happen before the child starts. Do not run separate schema and data dumps because they would not naturally share one snapshot.
+This mapping must happen before the child starts. Data-only scope is not representable: every retained object includes its schema, so a complete artifact never depends on a pre-existing destination table. Do not run separate schema and data dumps because they would not naturally share one snapshot.
 
 The temporary mydumper defaults file should contain the resolved per-table sections. Wildcards are a Porteau configuration feature; pass only concrete, safely quoted identifiers to mydumper.
 
@@ -417,7 +416,7 @@ include:
   databases: ["mydb"]
 
 exclude:
-  schema:
+  tables:
     - "mydb.sessions"
     - "mydb.cache_*"
   data:
@@ -903,7 +902,7 @@ Do not claim production safety based only on mocked subprocess tests.
 - Added the non-interactive backup safety path and command. It performs preflight before spawning, enables configured triggers/views, rejects unqualified object/TLS/profile combinations, refuses existing output paths, writes to a same-filesystem partial directory, requires process/event/artifact agreement, reserves the final path, atomically publishes, and cleans credentials and partial artifacts on failure or cancellation.
 - Artifact verification requires regular final metadata, no partial metadata, selected database/table metadata, exact database/base-table/view/trigger schema artifacts, and numeric data chunks for nonempty data-bearing tables. Identifiers that mydumper would masquerade are rejected until metadata alias mapping is qualified.
 - Manual qualification against the pinned binaries and disposable MySQL covered successful backup and restore, independent data exclusion, keyless-table warnings, trigger preservation, view artifacts, non-InnoDB rejection before spawn, zero stdout machine logging, cancellation without completion, and partial metadata on interruption. Committed deterministic tests cover disagreement, malformed/truncated streams, hanging locks, and child/grandchild cleanup. Phase 3 added an opt-in disposable-container harness for a narrower reproducible subset; its remaining qualification coverage is listed in Section 16.
-- The Phase 2 safety review tightened the qualified boundary: configuration failures are rendered through a controlled, value-redacting CLI boundary; `preferred` TLS requires encryption in both mysql2 and mydumper; privilege proof accepts only exact global or whole-database grants; and DATA-only views are rejected. AUTO publication now requires the observed global-lock, consistency-confirmation, table-unlock, and post-unlock sequence. Native completion file counts must match a flat artifact containing only top-level regular files, in addition to the per-table semantic checks.
+- The safety review tightened the qualified boundary: configuration failures are rendered through a controlled, value-redacting CLI boundary; `preferred` TLS requires encryption in both mysql2 and mydumper; privilege proof accepts only exact global or whole-database grants; and data-only artifacts are prohibited for every object. AUTO publication requires the observed global-lock, consistency-confirmation, table-unlock, and post-unlock sequence. Native completion file counts must match a flat artifact containing only top-level regular files, in addition to the per-table semantic checks.
 
 Phase 2 deliberately fails closed outside its qualified boundary. MariaDB and non-8.x MySQL are rejected. Routines/events await catalog and artifact qualification. CA-verified TLS modes await explicit CA configuration, and `preferred` requires TLS rather than retrying plaintext. The grant parser intentionally does not interpret roles, column/table grants, or other ambiguous SQL forms; those scopes cannot prove full catalog visibility. Artifact verification intentionally supports only the qualified flat layout rather than arbitrary recursive layouts. Nontransactional expert exports are rejected, and verifiable artifact identifiers use a conservative filename-safe subset. Process-tree guarantees are currently POSIX/qualified-Ubuntu guarantees. These are explicit future extensions, not silent fallbacks.
 

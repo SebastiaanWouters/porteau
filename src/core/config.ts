@@ -46,7 +46,7 @@ const configSchema = v.pipe(
     }),
     include: v.strictObject({ databases: v.array(v.string()) }),
     exclude: v.strictObject({
-      schema: v.array(v.string()),
+      tables: v.array(v.string()),
       data: v.array(v.string()),
     }),
     objects: v.strictObject({
@@ -102,7 +102,7 @@ export const defaultConfig = {
     deferIndexes: 'per-table',
   },
   include: { databases: [] },
-  exclude: { schema: [], data: [] },
+  exclude: { tables: [], data: [] },
   objects: { triggers: true, views: true, routines: false, events: false },
 } as const satisfies ConfigInput
 
@@ -169,6 +169,14 @@ function configFromEnvironment(env: NodeJS.ProcessEnv): Record<string, unknown> 
 }
 
 export function validateConfig(input: unknown): PorteauConfig {
+  if (
+    isConfigRecord(input) &&
+    isConfigRecord(input.exclude) &&
+    Object.hasOwn(input.exclude, 'schema')
+  )
+    throw new Error(
+      'Invalid Porteau configuration: exclude.schema is unsupported because data-only backups cannot be restored safely; use exclude.tables to omit the object or exclude.data to keep its schema only',
+    )
   try {
     return v.parse(configSchema, input)
   } catch (error) {

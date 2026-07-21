@@ -125,23 +125,21 @@ describe('table filters', () => {
     expect(() => assertArtifactSafeIdentifiers([catalog[0]!])).not.toThrow()
   })
 
-  it('maps independent exclusions and omits tables excluded from both', () => {
+  it('resolves only complete, schema-only, and omitted tables', () => {
     expect(
       resolveObjectScopes(catalog, {
-        schema: ['app.cache_*', 'app+.literal.table'],
-        data: ['app.users', 'app+.literal.table'],
+        tables: ['app.cache_*'],
+        data: ['app.users', 'app.cache_*'],
       }),
     ).toEqual([
       { ...catalog[0], serialized: '`app`.`users`', scope: 'SCHEMA' },
-      { ...catalog[1], serialized: '`app`.`cache_1`', scope: 'DATA' },
+      { ...catalog[2], serialized: '`app+`.`literal.table`', scope: 'ALL' },
     ])
   })
 
-  it('rejects DATA-only views and dollar signs in artifact identifiers', () => {
+  it('can omit views and rejects dollar signs in artifact identifiers', () => {
     const view = { database: 'app', table: 'summary', kind: 'view' as const }
-    expect(() => resolveObjectScopes([view], { schema: ['app.summary'], data: [] })).toThrow(
-      /Views cannot use DATA-only/,
-    )
+    expect(resolveObjectScopes([view], { tables: ['app.summary'], data: [] })).toEqual([])
     expect(() => assertArtifactSafeIdentifiers([{ database: 'app', table: 'price$' }])).toThrow()
   })
 
@@ -185,7 +183,7 @@ describe('artifact validation', () => {
     await expect(validateArtifact(root, () => ['missing'])).rejects.toThrow()
   })
 
-  it('does not mistake trigger files for a base schema and honors disabled triggers', async () => {
+  it('requires schema for every retained scope and honors disabled triggers', async () => {
     const root = await temporaryDirectory('porteau-artifact-')
     await writeFile(join(root, 'metadata'), '[`app`.`users`]\nrows = 0\n')
     await writeFile(join(root, 'app-schema-create.sql'), '')
@@ -201,6 +199,9 @@ describe('artifact validation', () => {
     await expect(verifyMydumperArtifact(root, [table], { triggers: true })).rejects.toThrow(
       /missing schema/,
     )
+    await expect(
+      verifyMydumperArtifact(root, [{ ...table, scope: 'SCHEMA' }], { triggers: false }),
+    ).rejects.toThrow(/missing schema/)
     await writeFile(join(root, 'app.users-schema.sql'), '')
     await rm(join(root, 'app.users-schema-triggers.sql'))
     await expect(
@@ -211,10 +212,18 @@ describe('artifact validation', () => {
     ).rejects.toThrow(/file count disagrees/)
   })
 
-  it('uses metadata as restore object proof and rejects artifact-controlled binlogging', async () => {
+  it('requires schema for every restore object and rejects artifact-controlled binlogging', async () => {
     const root = await temporaryDirectory('porteau-restore-artifact-')
     await writeFile(join(root, 'metadata'), '[`app`.`empty_data_only`]\nrows = 0\n')
     await writeFile(join(root, 'app-schema-create.sql'), '')
+    await expect(verifyRestoreArtifact(root, 'app')).rejects.toThrow(/missing schema/u)
+    await writeFile(join(root, 'metadata'), '[`app`.`empty_data_only`]\nrows = 1\n')
+    await writeFile(
+      join(root, 'app.empty_data_only.00000.sql'),
+      'INSERT INTO empty_data_only VALUES (1);',
+    )
+    await expect(verifyRestoreArtifact(root, 'app')).rejects.toThrow(/missing schema/u)
+    await writeFile(join(root, 'app.empty_data_only-schema.sql'), '')
     await expect(verifyRestoreArtifact(root, 'app')).resolves.toMatchObject({
       rootPath: root,
       files: expect.arrayContaining(['metadata', 'app-schema-create.sql']),
@@ -227,6 +236,27 @@ describe('artifact validation', () => {
     await expect(verifyRestoreArtifact(root, 'app')).rejects.toThrow(/binlog policy/u)
     await writeFile(join(root, 'metadata'), '[`other`.`users`]\nrows = 0\n')
     await expect(verifyRestoreArtifact(root, 'app')).rejects.toThrow(/no restorable objects/u)
+  })
+
+  it('requires the qualified schema-file pair only for metadata-declared views', async () => {
+    const base = await temporaryDirectory('porteau-restore-base-view-file-')
+    await writeFile(join(base, 'metadata'), '[`app`.`users`]\nrows = 0\n')
+    await writeFile(join(base, 'app-schema-create.sql'), '')
+    await writeFile(join(base, 'app.users-schema-view.sql'), 'CREATE VIEW users AS SELECT 1;')
+    await expect(verifyRestoreArtifact(base, 'app')).rejects.toThrow(/missing schema/u)
+    await writeFile(join(base, 'app.users-schema.sql'), 'CREATE TABLE users (id INT);')
+    await expect(verifyRestoreArtifact(base, 'app')).rejects.toThrow(/non-view object/u)
+
+    const view = await temporaryDirectory('porteau-restore-view-')
+    await writeFile(join(view, 'metadata'), '[`app`.`summary`]\nis_view = 1\n')
+    await writeFile(join(view, 'app-schema-create.sql'), '')
+    await writeFile(join(view, 'app.summary-schema.sql'), 'CREATE TABLE summary (value INT);')
+    await expect(verifyRestoreArtifact(view, 'app')).rejects.toThrow(/missing view definition/u)
+    await rm(join(view, 'app.summary-schema.sql'))
+    await writeFile(join(view, 'app.summary-schema-view.sql'), 'CREATE VIEW summary AS SELECT 1;')
+    await expect(verifyRestoreArtifact(view, 'app')).rejects.toThrow(/missing schema/u)
+    await writeFile(join(view, 'app.summary-schema.sql'), 'CREATE TABLE summary (value INT);')
+    await expect(verifyRestoreArtifact(view, 'app')).resolves.toMatchObject({ rootPath: view })
   })
 
   it('rejects loader control files and missing nonempty data chunks', async () => {
@@ -254,6 +284,7 @@ describe('artifact validation', () => {
       '[`app`.`users`]\nrows = 0\n[`app`.`users`]\nrows = 1\n',
     )
     await writeFile(join(duplicate, 'app-schema-create.sql'), '')
+    await writeFile(join(duplicate, 'app.users-schema.sql'), '')
     await expect(verifyRestoreArtifact(duplicate, 'app')).rejects.toThrow(/duplicate object/u)
   })
 })

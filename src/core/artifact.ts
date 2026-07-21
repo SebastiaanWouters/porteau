@@ -120,18 +120,16 @@ export async function verifyMydumperArtifact(
     const body = sectionBody(metadata, heading)
     if (body === undefined) throw new Error(`Artifact metadata omits ${table.serialized}`)
     const stem = `${table.database}.${table.table}`
-    if (table.scope !== 'DATA') {
-      if (!artifactFilePresent(files, `${stem}-schema.sql`))
-        throw new Error(`Artifact is missing schema for ${table.serialized}`)
-      if (table.kind === 'view' && !artifactFilePresent(files, `${stem}-schema-view.sql`))
-        throw new Error(`Artifact is missing view definition for ${table.serialized}`)
-      if (
-        options.triggers &&
-        table.hasTriggers &&
-        !artifactFilePresent(files, `${stem}-schema-triggers.sql`)
-      )
-        throw new Error(`Artifact is missing triggers for ${table.serialized}`)
-    }
+    if (!artifactFilePresent(files, `${stem}-schema.sql`))
+      throw new Error(`Artifact is missing schema for ${table.serialized}`)
+    if (table.kind === 'view' && !artifactFilePresent(files, `${stem}-schema-view.sql`))
+      throw new Error(`Artifact is missing view definition for ${table.serialized}`)
+    if (
+      options.triggers &&
+      table.hasTriggers &&
+      !artifactFilePresent(files, `${stem}-schema-triggers.sql`)
+    )
+      throw new Error(`Artifact is missing triggers for ${table.serialized}`)
     const rows = /^rows\s*=\s*(\d+)\s*$/mu.exec(body)?.[1]
     if (table.kind !== 'view' && table.scope !== 'SCHEMA' && rows === undefined)
       throw new Error(`Artifact metadata omits row count for ${table.serialized}`)
@@ -196,13 +194,20 @@ export async function verifyRestoreArtifact(
     if (body === undefined) throw new Error(`Artifact metadata is incomplete for ${heading}`)
     const stem = `${sourceDatabase}.${table}`
     const rows = /^rows\s*=\s*(\d+)\s*$/mu.exec(body)?.[1]
+    const viewFlag = /^is_view\s*=\s*(\d+)\s*$/mu.exec(body)?.[1]
+    if (viewFlag !== undefined && !['0', '1'].includes(viewFlag))
+      throw new Error(`Artifact metadata has an invalid view marker for ${heading}`)
+    const isView = viewFlag === '1'
     const hasSchema = artifactFilePresent(files, `${stem}-schema.sql`)
     const hasViewSchema = artifactFilePresent(files, `${stem}-schema-view.sql`)
     const hasData = artifactHasData(files, stem)
+    if (!hasSchema) throw new Error(`Artifact is missing schema for ${heading}`)
+    if (isView && !hasViewSchema)
+      throw new Error(`Artifact is missing view definition for ${heading}`)
+    if (!isView && hasViewSchema)
+      throw new Error(`Artifact has a view definition for non-view object ${heading}`)
     if (rows !== undefined && rows !== '0' && !hasData)
       throw new Error(`Artifact is missing data for ${heading}`)
-    if (rows === undefined && !hasSchema && !hasViewSchema)
-      throw new Error(`Artifact contains no schema or row metadata for ${heading}`)
   }
   return { rootPath: root, files }
 }
