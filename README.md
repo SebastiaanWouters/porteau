@@ -2,6 +2,18 @@
 
 Porteau is a safety-first TypeScript CLI for consistent MySQL logical backups and restores using `mydumper` and `myloader`. See [INSTALL.md](INSTALL.md) for supported installation and native-tool setup.
 
+## Development verification
+
+Use the same entry points locally and in CI:
+
+```sh
+vp run verify             # format, lint, types, unit tests, build, and package smoke test
+vp run verify:external    # disposable MySQL plus installers native to this machine
+vp run package:dry-run    # local suite plus npm publication dry run
+```
+
+For a focused external rerun, use `vp run verify:mysql`, `vp run verify:installers`, or, on a native arm64 host, `bash scripts/verify-external.sh ubuntu-2404-arm64`. External verification requires Docker. The default external command reports architecture coverage explicitly; native Ubuntu arm64 remains a separate CI job on amd64 developer machines. `package:dry-run` verifies package construction only; it is not the complete release gate. Actual npm publication is intentionally not part of any verification command.
+
 ## Interactive use
 
 Run `porteau doctor` first. For a guided backup, use a terminal and omit values you want Porteau to prompt for:

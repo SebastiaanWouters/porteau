@@ -39,18 +39,18 @@ if (( NODE )); then
   echo '  sudo install -m 0644 <verified-source-list> /etc/apt/sources.list.d/porteau-nodesource.list'
   echo '  sudo apt-get update'
   echo '  Validate with: apt-cache madison nodejs (require NodeSource node_24.x and major 24)'
-  echo '  sudo apt-get install --yes nodejs=<validated NodeSource 24 candidate>'
+  echo '  sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes nodejs=<validated NodeSource 24 candidate>'
 fi
 if (( TOOLS )); then
   echo "  Native package: $URL"
   echo "  Required size: $SIZE; required SHA-256: $SHA"
-  echo "  sudo apt-get install --yes ./$ASSET (from the verified temporary directory)"
+  echo "  sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes ./$ASSET (from the verified temporary directory)"
 fi
 for marker in NVM_DIR ASDF_DIR MISE_DATA_DIR VOLTA_HOME; do [[ -n "${!marker:-}" ]] && echo "  Warning: user-managed Node detected ($marker); system Node will not replace its shims."; done
 (( NODE || TOOLS )) || { echo 'All dependencies are compatible.'; exit 0; }
 (( CHECK )) && { echo 'Check only: no changes made.'; exit 1; }
 if (( ! YES )); then
-  [[ -r /dev/tty && -w /dev/tty ]] || { echo 'No TTY: refusing mutation without --yes.' >&2; exit 1; }
+  { : </dev/tty && : >/dev/tty; } 2>/dev/null || { echo 'No TTY: refusing mutation without --yes.' >&2; exit 1; }
   printf 'Proceed? [y/N] ' >/dev/tty; read -r answer </dev/tty || true
   [[ "$answer" == y || "$answer" == Y ]] || { echo 'Cancelled; install dependencies manually or rerun with --yes.'; exit 0; }
 fi
@@ -76,9 +76,9 @@ if (( NODE )); then
   sudo apt-get update
   CANDIDATE="$(apt-cache madison nodejs | awk -F'|' '{for(i=1;i<=3;i++)gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)} $1=="nodejs" && $2 ~ /^24\./ && index($3,"https://deb.nodesource.com/node_24.x")==1 {print $2; exit}')"
   [[ -n "$CANDIDATE" ]] || { echo 'NodeSource did not provide a Node.js 24 candidate.' >&2; exit 1; }
-  sudo apt-get install --yes "nodejs=$CANDIDATE"
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "nodejs=$CANDIDATE"
 fi
-(( TOOLS )) && (cd "$TMP" && sudo apt-get install --yes "./$ASSET")
+(( TOOLS )) && (cd "$TMP" && sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes "./$ASSET")
 if ! node_ok || ! version_ok mydumper '1.0.3-1' || ! machine_ok mydumper || ! version_ok myloader '1.0.3-1' || ! machine_ok myloader; then
   echo 'Post-install verification failed.' >&2
   exit 1

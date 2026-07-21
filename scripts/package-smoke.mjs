@@ -45,7 +45,7 @@ try {
   const installedMetadata = JSON.parse(
     readFileSync(join(project, 'node_modules', 'porteau', 'package.json'), 'utf8'),
   )
-  if (installedMetadata.bin?.porteau !== './dist/cli.mjs')
+  if (installedMetadata.bin?.porteau !== 'dist/cli.mjs')
     throw new Error('Installed package does not expose the expected porteau bin')
   console.log(`Package smoke passed (${files.length} files; packaged dist/cli.mjs invoked).`)
 } finally {

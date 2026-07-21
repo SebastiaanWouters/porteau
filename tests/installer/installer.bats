@@ -4,11 +4,14 @@ setup() {
   [[ -f /etc/os-release ]] && . /etc/os-release
   [[ "${ID:-}" == ubuntu ]] || skip "installer tests require a disposable Ubuntu container"
   root="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
-  fake="$BATS_TEST_TMPDIR/bin"
+  fake="$BATS_TEST_TMPDIR/fake-bin"
+  rm -rf "$fake"
   mkdir -p "$fake"
   make_fake dpkg 'echo amd64'
   expected_size=9624536
-  [[ "${VERSION_ID:-}" == 22.04 ]] && expected_size=1627788
+  if [[ "${VERSION_ID:-}" == 22.04 ]]; then
+    expected_size=1627788
+  fi
 }
 
 make_fake() {
@@ -74,10 +77,10 @@ compatible() {
 @test "missing and incompatible Node plus user-managed runtimes are reported" {
   compatible; make_fake node 'exit 1'
   run env PATH="$fake:/usr/bin:/bin" VOLTA_HOME=/volta bash "$root/install.sh" --check
-  [ "$status" -eq 1 ]; [[ "$output" == *"Node.js 24"* ]]; [[ "$output" == *VOLTA_HOME* ]]
+  [ "$status" -eq 1 ]; [[ "$output" == *"Node.js target: 24"* ]]; [[ "$output" == *VOLTA_HOME* ]]
   compatible; make_fake node 'if [ "$1" = -e ]; then exit 1; fi; echo v20.0.0'
   run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --check
-  [ "$status" -eq 1 ]; [[ "$output" == *"Node.js 24"* ]]
+  [ "$status" -eq 1 ]; [[ "$output" == *"Node.js target: 24"* ]]
 }
 
 @test "noninteractive mutation is refused without --yes" {

@@ -230,7 +230,19 @@ describe('read-only setup diagnostics', () => {
       expect(errors.filter((line) => line.startsWith('error:'))).toHaveLength(1)
       delete process.env.PORTEAU_MYDUMPER
 
-      expect(await executeCli({ args: ['setup'], stderr: (line) => errors.push(line) })).toBe(1)
+      const unsupported = await runDiagnostics({
+        platform: 'darwin',
+        architecture: 'arm64',
+        nodeVersion: '24.0.0',
+        ...toolDependencies(),
+      })
+      expect(
+        await executeCli({
+          args: ['setup'],
+          stderr: (line) => errors.push(line),
+          services: { collectDiagnostics: async () => unsupported },
+        }),
+      ).toBe(1)
       expect(errors.at(-1)).toContain('Automatic installation is unavailable')
 
       await unlink(join(binDirectory, 'myloader'))

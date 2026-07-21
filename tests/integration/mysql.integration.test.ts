@@ -1,4 +1,4 @@
-import { readdir, rm } from 'node:fs/promises'
+import { access, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -6,6 +6,7 @@ import mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it } from 'vite-plus/test'
 import { runBackup } from '../../src/core/backup.js'
 import { defaultConfig, type PorteauConfig } from '../../src/core/config.js'
+import { runBackupPreflight, runRestorePreflight } from '../../src/core/preflight.js'
 import { runRestore } from '../../src/core/restore.js'
 
 const enabled = process.env.PORTEAU_MYSQL_INTEGRATION === '1'
@@ -13,6 +14,7 @@ const host = process.env.MYSQL_HOST ?? 'mysql'
 const password = process.env.MYSQL_PWD ?? ''
 const root = join(tmpdir(), `porteau-mysql-qualification-${process.pid}`)
 const suite = enabled ? describe : describe.skip
+const disposableTls = { rejectUnauthorized: false }
 
 function config(database: string, output: string): PorteauConfig {
   return {
@@ -36,11 +38,14 @@ function config(database: string, output: string): PorteauConfig {
 
 suite('Porteau against pinned MySQL and mydumper', () => {
   beforeAll(async () => {
+    await access('/.dockerenv').catch(() => {
+      throw new Error('MySQL qualification must run inside the disposable Compose container')
+    })
     const db = await mysql.createConnection({
       host,
       user: 'root',
       password,
-      ssl: {},
+      ssl: disposableTls,
       multipleStatements: true,
     })
     await db.query(`
@@ -58,6 +63,10 @@ suite('Porteau against pinned MySQL and mydumper', () => {
       CREATE VIEW safe_app.row_view AS SELECT id, value FROM safe_app.rows WHERE id <= 10;
       CREATE DATABASE unsafe_app;
       CREATE TABLE unsafe_app.unsafe(id INT) ENGINE=MyISAM;
+      CREATE USER 'partially_revoked'@'%' IDENTIFIED BY 'partial-only';
+      GRANT ALL PRIVILEGES ON *.* TO 'partially_revoked'@'%';
+      GRANT BACKUP_ADMIN ON *.* TO 'partially_revoked'@'%';
+      REVOKE SELECT ON safe_app.* FROM 'partially_revoked'@'%';
     `)
     await db.end()
   }, 60_000)
@@ -69,7 +78,12 @@ suite('Porteau against pinned MySQL and mydumper', () => {
   it('round-trips through guarded Porteau backup and restore under writes', async () => {
     const output = join(root, 'consistent')
     const events: string[] = []
-    const writer = await mysql.createConnection({ host, user: 'root', password, ssl: {} })
+    const writer = await mysql.createConnection({
+      host,
+      user: 'root',
+      password,
+      ssl: disposableTls,
+    })
     const [initial] = await writer.query('SELECT COUNT(*) count FROM safe_app.rows')
     const initialRows = Number((initial as { count: number }[])[0]!.count)
     let writing = true
@@ -134,7 +148,12 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     expect(restoreEvents).toEqual(
       expect.arrayContaining(['restore_completed/restore_finish/finished']),
     )
-    const verify = await mysql.createConnection({ host, user: 'root', password, ssl: {} })
+    const verify = await mysql.createConnection({
+      host,
+      user: 'root',
+      password,
+      ssl: disposableTls,
+    })
     const [sourceRows] = await verify.query('SELECT COUNT(*) count FROM safe_app.rows')
     const [rows] = await verify.query('SELECT COUNT(*) count FROM restored.rows')
     const [schemaOnly] = await verify.query('SELECT COUNT(*) count FROM restored.schema_only')
@@ -173,6 +192,33 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     const output = join(root, 'unsafe')
     await expect(runBackup({ config: config('unsafe_app', output) })).rejects.toThrow(/non-InnoDB/)
     await expect(readdir(output)).rejects.toThrow()
+  })
+
+  it('subtracts real MySQL partial revokes from backup and restore visibility', async () => {
+    const partialConfig = {
+      ...config('safe_app', join(root, 'partial-revoke')),
+      connection: {
+        ...config('safe_app', root).connection,
+        user: 'partially_revoked',
+        password: 'partial-only',
+      },
+    }
+    await expect(
+      runBackupPreflight({
+        config: partialConfig,
+        databases: ['safe_app'],
+        tablePatterns: ['safe_app.*'],
+      }),
+    ).rejects.toThrow(/safe lock strategy: SELECT/u)
+    await expect(
+      runRestorePreflight({
+        config: partialConfig,
+        destinationDatabase: 'safe_app',
+        destinationPolicy: 'allow-existing',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'enable',
+      }),
+    ).rejects.toThrow(/catalog visibility/u)
   })
 
   it('cancels the native process tree and removes partial and final artifacts', async () => {

@@ -1,10 +1,11 @@
 services:
   mysql:
-    image: mysql:8.4.10
+    image: mysql@sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d
+    command: --partial-revokes=ON
     environment:
       MYSQL_ROOT_PASSWORD: qualification-only
     healthcheck:
-      test: [CMD, mysqladmin, ping, -h, localhost, -pqualification-only]
+      test: [CMD, mysqladmin, ping, -h, 127.0.0.1, -pqualification-only]
       interval: 2s
       timeout: 2s
       retries: 40

@@ -246,6 +246,7 @@ describe('standalone generated installer', () => {
     expect(script).toContain('set -Eeuo pipefail')
     expect(script).toContain('nodistro main')
     expect(script).toContain('6F71F525282841EEDAF851B42F59B5F99B1BE0B4')
+    expect(script).toContain('sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes')
     expect(script).not.toContain('setup_24.x')
     expect(script).not.toMatch(/\beval\b/u)
   })

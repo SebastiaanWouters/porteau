@@ -193,11 +193,16 @@ describe('native process lifecycle', () => {
         }),
       ).rejects.toThrow(/Truncated/)
       const pid = Number(readFileSync(pidFile, 'utf8'))
-      let state = readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ')[2]
+      let state: string
+      try {
+        state = readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ')[2] ?? 'missing'
+      } catch {
+        state = 'missing'
+      }
       for (let attempt = 0; state !== 'Z' && attempt < 20; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 10))
         try {
-          state = readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ')[2]
+          state = readFileSync(`/proc/${pid}/stat`, 'utf8').split(' ')[2] ?? 'missing'
         } catch {
           state = 'missing'
         }

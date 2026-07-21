@@ -8,10 +8,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     name: Node ${{ matrix.node }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -24,19 +29,43 @@ jobs:
           cache: true
           run-install: false
       - run: vp install --frozen-lockfile
-      - run: vp check
-      - run: vp test
-      - run: vp pack
-      - name: Smoke-test npm package contents and clean install
-        run: vp run package:smoke
+      - name: Run the local verification suite
+        run: vp run verify
 
   mysql-integration:
     name: MySQL 8.4 guarded round trip
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PORTEAU_COMPOSE_PROJECT: porteau-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v6
       - name: Run isolated integration harness
-        run: docker compose -f tests/integration/compose.yaml up --build --abort-on-container-exit --exit-code-from qualification
+        run: bash scripts/verify-external.sh mysql
       - name: Remove integration services and volumes
         if: always()
-        run: docker compose -f tests/integration/compose.yaml down -v
+        run: docker compose --project-name "${PORTEAU_COMPOSE_PROJECT}-mysql" -f tests/integration/compose.yaml down -v
+
+  installer-integration:
+    name: Installer ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      PORTEAU_COMPOSE_PROJECT: porteau-${{ github.run_id }}-${{ github.run_attempt }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: Ubuntu 22.04 amd64
+            runner: ubuntu-24.04
+            qualification: ubuntu-2204
+          - target: Ubuntu 24.04 amd64
+            runner: ubuntu-24.04
+            qualification: ubuntu-2404
+          - target: Ubuntu 24.04 arm64
+            runner: ubuntu-24.04-arm
+            qualification: ubuntu-2404-arm64
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run installer behavior and idempotency checks
+        run: bash scripts/verify-external.sh ${{ matrix.qualification }}

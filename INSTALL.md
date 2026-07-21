@@ -31,15 +31,12 @@ Porteau does not silently broaden platform support: a manually installed platfor
 These commands create and mutate **containers only**. They must never be pointed at a host database or run directly as root on a workstation.
 
 ```sh
-docker compose -f tests/installer/compose.yaml build
-docker compose -f tests/installer/compose.yaml run --rm ubuntu-2204
-docker compose -f tests/installer/compose.yaml run --rm ubuntu-2404
-# opt-in emulated/native ARM qualification:
-docker compose -f tests/installer/compose.yaml --profile arm64 run --rm ubuntu-2404-arm64
+vp run verify:external    # MySQL and installer targets native to this machine
+vp run verify:mysql       # MySQL 8.4 + pinned native dump/restore only
+vp run verify:installers  # Ubuntu 22.04 and 24.04 amd64 installers only
 
-# MySQL 8.4 + pinned native dump/restore qualification (also disposable):
-docker compose -f tests/integration/compose.yaml up --build --abort-on-container-exit --exit-code-from qualification
-docker compose -f tests/integration/compose.yaml down -v
+# Explicit native ARM qualification on an arm64 host (normally run by CI):
+bash scripts/verify-external.sh ubuntu-2404-arm64
 ```
 
-The integration test is gated by `PORTEAU_MYSQL_INTEGRATION=1`; normal `vp test` discovers it but skips it. Compose supplies that variable only to its isolated qualification service.
+The wrapper always tears down the disposable MySQL services and volumes after a completed run. The integration test is gated by `PORTEAU_MYSQL_INTEGRATION=1`; normal `vp test` discovers it but skips it. Compose supplies that variable only to its isolated qualification service.
