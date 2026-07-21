@@ -115,47 +115,49 @@ This is an isolation boundary, not a plugin framework. Implement only `MydumperE
 
 ## 4. Architecture
 
-The following is the target layout. Files marked `(implemented)` exist at the end of Phase 1; the remaining paths are introduced only when their owning phase needs them.
+The following combines the current layout through Phase 2 with later target paths. Entries marked `(planned)` do not exist yet and are introduced only when their owning phase needs them.
 
 ```text
 porteau/
-├── install.sh                       # Generated Ubuntu dependency bootstrap
+├── install.sh                       # Generated Ubuntu dependency bootstrap (planned Phase 3)
 ├── package.json
 ├── vite.config.ts
-├── porteau.config.yaml
+├── porteau.config.yaml              # Example configuration (planned)
 ├── src/
-│   ├── cli.ts                       # citty entrypoint (implemented); top-level error boundary follows
+│   ├── cli.ts                       # citty entrypoint and temporary plain error boundary (implemented)
 │   ├── commands/
-│   │   ├── backup.ts                # Command skeleton implemented
-│   │   ├── restore.ts               # Command skeleton implemented
-│   │   ├── init.ts                  # Command skeleton implemented
-│   │   ├── setup.ts                 # Command skeleton implemented
-│   │   ├── doctor.ts                # Command skeleton implemented
-│   │   └── config.ts                # Command skeleton implemented
+│   │   ├── backup.ts                # Non-interactive backup command (implemented)
+│   │   ├── restore.ts               # Command skeleton; destination mutation waits for Phase 5
+│   │   ├── init.ts                  # Command skeleton
+│   │   ├── setup.ts                 # Command skeleton; read-only --check is next
+│   │   ├── doctor.ts                # Command skeleton; read-only diagnostics are next
+│   │   └── config.ts                # Command skeleton
 │   ├── core/
-│   │   ├── engine.ts                # Narrow engine capabilities and request types (implemented)
-│   │   ├── mydumper.ts              # mydumper subprocess adapter
-│   │   ├── myloader.ts              # myloader subprocess adapter
-│   │   ├── events.ts                # Porteau-owned normalized event schema (implemented)
+│   │   ├── engine.ts                # Narrow engine capabilities and request types
+│   │   ├── backup.ts                # Safe backup orchestration and atomic publication
+│   │   ├── mydumper.ts              # Shared mydumper/myloader event parser and runner
+│   │   ├── myloader.ts              # Restore adapter (planned Phase 5)
+│   │   ├── events.ts                # Porteau-owned normalized event schema
 │   │   ├── process.ts               # Child lifecycle, process groups, and signals
-│   │   ├── preflight.ts             # Server, engine, privilege, lock, and capacity checks
+│   │   ├── database.ts              # mysql2 connection, deadlines, TLS, and error sanitization
+│   │   ├── preflight.ts             # Read-only source/catalog/privilege checks
 │   │   ├── artifact.ts              # Completion and metadata verification
-│   │   ├── config.ts                # c12 + replacement merger + Valibot (implemented)
+│   │   ├── config.ts                # c12 + replacement merger + Valibot
 │   │   ├── filters.ts               # Pattern expansion and object-scope resolution
 │   │   ├── credentials.ts           # Temporary protected defaults files
 │   │   └── tools.ts                 # Binary resolution and version checks
 │   ├── setup/
-│   │   ├── manifest.json            # Canonical supported package/digest manifest (implemented)
-│   │   ├── manifest.ts              # Validated TypeScript access (implemented)
-│   │   ├── ubuntu.ts                # Guarded apt installer
-│   │   └── diagnostics.ts
+│   │   ├── manifest.json            # Canonical supported package/digest manifest
+│   │   ├── manifest.ts              # Validated TypeScript access
+│   │   ├── ubuntu.ts                # Guarded apt installer (planned Phase 3)
+│   │   └── diagnostics.ts            # Shared read-only diagnostics (immediate next slice)
 │   ├── presentation/
-│   │   ├── context.ts               # TTY, CI, color, verbosity, JSON, and prompt policy
-│   │   ├── prompts.ts               # Thin @clack/prompts wrappers
-│   │   ├── progress.ts              # Interactive/non-interactive progress sinks
-│   │   ├── output.ts                # consola and final summaries
-│   │   └── redaction.ts
-│   ├── errors/
+│   │   ├── context.ts               # TTY, CI, color, verbosity, JSON, and prompt policy (planned Phase 4)
+│   │   ├── prompts.ts               # Thin @clack/prompts wrappers (planned Phase 4)
+│   │   ├── progress.ts              # Interactive/non-interactive progress sinks (planned Phase 4)
+│   │   ├── output.ts                # consola and final summaries (planned Phase 4)
+│   │   └── redaction.ts             # Centralized redaction (planned Phase 4)
+│   ├── errors/                       # Structured domain errors (planned Phase 4)
 │   │   ├── artifact.ts
 │   │   ├── config.ts
 │   │   ├── dependency.ts
@@ -163,11 +165,11 @@ porteau/
 │   │   └── process.ts
 │   └── utils/
 ├── scripts/
-│   └── generate-install-script.ts   # Embeds canonical manifest into install.sh
+│   └── generate-install-script.ts   # Embeds canonical manifest into install.sh (planned Phase 3)
 └── tests/
-    ├── fixtures/
-    ├── integration/
-    └── installer/
+    ├── fixtures/                     # Native JSONL and deterministic subprocess fixtures
+    ├── integration/                  # Disposable real-MySQL harness (not yet committed)
+    └── installer/                    # Installer tests (planned Phase 3)
 ```
 
 ### Command flow
@@ -790,7 +792,7 @@ vp env install
 vp install
 
 # Run during development.
-vp node src/cli.ts backup --config porteau.config.yaml
+vp run porteau backup --config porteau.config.yaml
 
 # Format, lint, and typecheck.
 vp check
@@ -808,7 +810,7 @@ Development must not require running `install.sh` against the host. Installer un
 
 ## 16. Test strategy
 
-Tests are added with the phase that introduces the behavior. Phase 2 must first turn the current minimal subprocess convention into reusable fixture executables and pin observed native machine-log fixtures. Real-MySQL tests then validate claims that mocks cannot establish. Installer tests wait for the setup backend, and presentation-mode tests wait for the presentation layer; no later phase should replace or weaken an earlier safety gate.
+Tests are added with the phase that introduces the behavior. Phase 2 turned the initial subprocess convention into reusable fixture executables and pinned observed native machine-log fixtures. The committed automated suite currently uses injected MySQL protocol connections and deterministic subprocess fixtures; a disposable real-MySQL harness is still required to make the manual qualification reproducible and validate claims that mocks cannot establish. Installer tests wait for the setup backend, and presentation-mode tests wait for the presentation layer; no later phase should replace or weaken an earlier safety gate.
 
 ### Unit tests
 
@@ -888,7 +890,7 @@ Do not claim production safety based only on mocked subprocess tests.
 - Added incremental native event parsing, explicit normalized mapping, required completion counters, bounded diagnostics, POSIX process groups, abort/timeout forwarding, TERM-to-KILL escalation, and parser-failure tree cleanup. The lock watchdog remains armed through native `table_unlock` and clears only after the qualified post-unlock event.
 - Added the non-interactive backup safety path and command. It performs preflight before spawning, enables configured triggers/views, rejects unqualified object/TLS/profile combinations, refuses existing output paths, writes to a same-filesystem partial directory, requires process/event/artifact agreement, reserves the final path, atomically publishes, and cleans credentials and partial artifacts on failure or cancellation.
 - Artifact verification requires regular final metadata, no partial metadata, selected database/table metadata, exact database/base-table/view/trigger schema artifacts, and numeric data chunks for nonempty data-bearing tables. Identifiers that mydumper would masquerade are rejected until metadata alias mapping is qualified.
-- Real qualification covered successful backup and restore, independent data exclusion, keyless-table warnings, trigger preservation, view artifacts, non-InnoDB rejection before spawn, zero stdout machine logging, cancellation without completion, and partial metadata on interruption. Deterministic tests cover disagreement, malformed/truncated streams, hanging locks, and child/grandchild cleanup.
+- Manual qualification against the pinned binaries and disposable MySQL covered successful backup and restore, independent data exclusion, keyless-table warnings, trigger preservation, view artifacts, non-InnoDB rejection before spawn, zero stdout machine logging, cancellation without completion, and partial metadata on interruption. Committed deterministic tests cover disagreement, malformed/truncated streams, hanging locks, and child/grandchild cleanup; the real-MySQL qualification is not yet represented by a committed disposable-container harness.
 - The Phase 2 safety review tightened the qualified boundary: configuration failures are rendered through a controlled, value-redacting CLI boundary; `preferred` TLS requires encryption in both mysql2 and mydumper; privilege proof accepts only exact global or whole-database grants; and DATA-only views are rejected. AUTO publication now requires the observed global-lock, consistency-confirmation, table-unlock, and post-unlock sequence. Native completion file counts must match a flat artifact containing only top-level regular files, in addition to the per-table semantic checks.
 
 Phase 2 deliberately fails closed outside its qualified boundary. MariaDB and non-8.x MySQL are rejected. Routines/events await catalog and artifact qualification. CA-verified TLS modes await explicit CA configuration, and `preferred` requires TLS rather than retrying plaintext. The grant parser intentionally does not interpret roles, column/table grants, or other ambiguous SQL forms; those scopes cannot prove full catalog visibility. Artifact verification intentionally supports only the qualified flat layout rather than arbitrary recursive layouts. Nontransactional expert exports are rejected, and verifiable artifact identifiers use a conservative filename-safe subset. Process-tree guarantees are currently POSIX/qualified-Ubuntu guarantees. These are explicit future extensions, not silent fallbacks.
@@ -934,7 +936,9 @@ Do not import Clack or consola into `src/core` or `src/setup`. Do not make backu
 
 Completed on 2026-07-21 within the qualified boundary recorded in Section 17. Broader server, TLS, identifier, and object support must add evidence and tests before relaxing those fail-closed gates.
 
-### Phase 3 — Read-only diagnostics and setup backend
+### Phase 3 — Read-only diagnostics and setup backend (next)
+
+**Immediate next slice:** implement a pure read-only diagnostics service in `src/setup/diagnostics.ts`, reusing `src/core/tools.ts` and the validated compatibility manifest, then wire the same result model to `porteau doctor` and `porteau setup --check`. Cover OS/codename/architecture detection, Node version, independent mydumper/myloader resolution, matching supported versions, and actionable status without prompts or mutation. Add focused service and CLI tests before beginning installer mutation.
 
 - Implement reusable OS, architecture, tool-resolution, version, and compatibility diagnostics used by both `doctor` and setup planning.
 - Implement `doctor` and `setup --check` as read-only non-interactive commands first. Reuse Phase 2 tool inspection rather than introducing a second version parser.
@@ -946,6 +950,8 @@ Completed on 2026-07-21 within the qualified boundary recorded in Section 17. Br
 - Document unsupported-platform manual paths.
 
 The generator must consume validated canonical data, but the committed `install.sh` must remain standalone Bash because it runs before Node/Porteau may exist. A drift test regenerates to a temporary path and compares bytes. Never run installer integration tests against the host.
+
+Before Phase 4 UI work, add the committed disposable-MySQL harness for the Phase 2 safety claims, including concurrent-write consistency, startup-lock behavior, filters, nontransactional rejection, cancellation artifacts, and a pinned dump/restore smoke test. This is verification debt, not a reason to duplicate or redesign the completed backup path.
 
 **Exit gate:** diagnostics and `--check` are provably read-only, mutation requires explicit approval, generated Bash is deterministic and standalone, supported Ubuntu container tests are idempotent, and all package checks pass.
 
