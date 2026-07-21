@@ -13,6 +13,7 @@ export interface ResolveToolOptions {
   readonly env?: NodeJS.ProcessEnv
   readonly configPath?: string
   readonly cwd?: string
+  readonly signal?: AbortSignal
 }
 
 export interface InspectedTool {
@@ -58,6 +59,7 @@ export async function resolveToolInfo(
   name: ToolName,
   options: ResolveToolOptions = {},
 ): Promise<ResolvedTool> {
+  options.signal?.throwIfAborted()
   const env = options.env ?? process.env
   const environmentPath = env[`PORTEAU_${name.toUpperCase()}`]
   const explicit = environmentPath ?? options.configPath
@@ -71,6 +73,7 @@ export async function resolveToolInfo(
   }
 
   for (const directory of (env.PATH ?? '').split(delimiter)) {
+    options.signal?.throwIfAborted()
     if (directory === '') continue
     const candidate = join(directory, name)
     if (await executable(candidate)) return { path: candidate, source: 'path' }
@@ -97,6 +100,7 @@ export async function inspectToolVersion(
   name: ToolName,
   path: string,
   env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<InspectedTool> {
   if (!isAbsolute(path)) throw new Error(`${name} path must be absolute`)
   const { stdout, stderr } = await execFileAsync(path, ['--version'], {
@@ -104,6 +108,7 @@ export async function inspectToolVersion(
     shell: false,
     timeout: 10_000,
     ...(env ? { env } : {}),
+    ...(signal ? { signal } : {}),
   })
   if (stderr !== '') throw new Error(`${name} wrote unexpected version diagnostics`)
   const version = parseToolVersion(name, stdout)
@@ -114,8 +119,9 @@ export async function inspectTool(
   name: ToolName,
   path: string,
   env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<InspectedTool> {
-  const inspected = await inspectToolVersion(name, path, env)
+  const inspected = await inspectToolVersion(name, path, env, signal)
   const { version } = inspected
   if (!compatibilityManifest.engine.tools[name].acceptedVersions.includes(version)) {
     throw new Error(`Unsupported ${name} version: ${version}`)

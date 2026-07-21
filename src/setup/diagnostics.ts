@@ -70,6 +70,7 @@ export interface DiagnosticsOptions {
   readonly readTextFile?: (path: string) => Promise<string>
   readonly resolve?: typeof resolveToolInfo
   readonly inspect?: typeof inspectToolVersion
+  readonly signal?: AbortSignal
 }
 
 function parseOsRelease(contents: string): Record<string, string> {
@@ -107,6 +108,7 @@ function versionAtLeast(actual: string, minimum: string): boolean {
 }
 
 async function diagnoseSystem(options: DiagnosticsOptions): Promise<SystemDiagnostic> {
+  options.signal?.throwIfAborted()
   const platform = options.platform ?? process.platform
   let architecture = debianArchitecture(options.architecture ?? process.arch)
   if (platform === 'linux' && options.architecture === undefined) {
@@ -114,9 +116,15 @@ async function diagnoseSystem(options: DiagnosticsOptions): Promise<SystemDiagno
       architecture = (
         options.readDebianArchitecture
           ? await options.readDebianArchitecture()
-          : (await execFileAsync('dpkg', ['--print-architecture'], { encoding: 'utf8' })).stdout
+          : (
+              await execFileAsync('dpkg', ['--print-architecture'], {
+                encoding: 'utf8',
+                ...(options.signal ? { signal: options.signal } : {}),
+              })
+            ).stdout
       ).trim()
     } catch {
+      options.signal?.throwIfAborted()
       architecture = 'unknown'
     }
   }
@@ -129,6 +137,7 @@ async function diagnoseSystem(options: DiagnosticsOptions): Promise<SystemDiagno
         : await readFile(path, 'utf8')
       release = parseOsRelease(contents)
     } catch {
+      options.signal?.throwIfAborted()
       // Missing release metadata is reported as unsupported rather than failing diagnostics.
     }
   }
@@ -161,16 +170,19 @@ async function diagnoseSystem(options: DiagnosticsOptions): Promise<SystemDiagno
 }
 
 async function diagnoseTool(name: ToolName, options: DiagnosticsOptions): Promise<ToolDiagnostic> {
+  options.signal?.throwIfAborted()
   const environment = options.env ?? process.env
   const resolutionOptions: ResolveToolOptions = {
     env: environment,
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(options.configPaths?.[name] ? { configPath: options.configPaths[name] } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   }
   let resolved
   try {
     resolved = await (options.resolve ?? resolveToolInfo)(name, resolutionOptions)
   } catch (error) {
+    options.signal?.throwIfAborted()
     const resolutionError = error instanceof ToolResolutionError ? error : undefined
     return {
       name,
@@ -192,6 +204,7 @@ async function diagnoseTool(name: ToolName, options: DiagnosticsOptions): Promis
       name,
       resolved.path,
       inspectionEnvironment,
+      options.signal,
     )
     const supported = compatibilityManifest.engine.tools[name].acceptedVersions.includes(
       inspected.version,
@@ -209,6 +222,7 @@ async function diagnoseTool(name: ToolName, options: DiagnosticsOptions): Promis
         : {}),
     }
   } catch {
+    options.signal?.throwIfAborted()
     return {
       name,
       status: 'error',
@@ -220,6 +234,7 @@ async function diagnoseTool(name: ToolName, options: DiagnosticsOptions): Promis
 }
 
 export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<DiagnosticsResult> {
+  options.signal?.throwIfAborted()
   const nodeVersion = (options.nodeVersion ?? process.version).replace(/^v/u, '')
   const nodeSupported = versionAtLeast(nodeVersion, minimumNodeVersion)
   const [system, mydumper, myloader] = await Promise.all([
@@ -227,6 +242,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     diagnoseTool('mydumper', options),
     diagnoseTool('myloader', options),
   ])
+  options.signal?.throwIfAborted()
   const versionsMatch =
     mydumper.status === 'ok' && myloader.status === 'ok' && mydumper.version === myloader.version
   const toolPair: ToolPairDiagnostic = versionsMatch

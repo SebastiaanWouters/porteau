@@ -190,10 +190,16 @@ describe('read-only setup diagnostics', () => {
     const errors: string[] = []
     const previousMydumper = process.env.PORTEAU_MYDUMPER
     const previousMyloader = process.env.PORTEAU_MYLOADER
-    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-      output.push(String(chunk))
-      return true
-    })
+    const writeSpy = vi
+      .spyOn(process.stdout, 'write')
+      .mockImplementation((chunk, ...arguments_) => {
+        output.push(String(chunk))
+        const callback = arguments_.find(
+          (argument): argument is (error?: Error | null) => void => typeof argument === 'function',
+        )
+        callback?.()
+        return true
+      })
     delete process.env.PORTEAU_MYDUMPER
     delete process.env.PORTEAU_MYLOADER
     try {
@@ -220,12 +226,12 @@ describe('read-only setup diagnostics', () => {
           stderr: (line) => errors.push(line),
         }),
       ).toBe(1)
-      expect(output.join('')).toContain(`${invalidOverride} (environment)`)
-      expect(errors.at(-1)).toBe('error: Dependency diagnostics failed')
+      expect(errors.some((line) => line.includes(`${invalidOverride} (environment)`))).toBe(true)
+      expect(errors.filter((line) => line.startsWith('error:'))).toHaveLength(1)
       delete process.env.PORTEAU_MYDUMPER
 
       expect(await executeCli({ args: ['setup'], stderr: (line) => errors.push(line) })).toBe(1)
-      expect(errors.at(-1)).toContain('use porteau setup --check')
+      expect(errors.at(-1)).toContain('Automatic installation is unavailable')
 
       await unlink(join(binDirectory, 'myloader'))
       await writeFile(
@@ -239,7 +245,7 @@ describe('read-only setup diagnostics', () => {
           stderr: (line) => errors.push(line),
         }),
       ).toBe(1)
-      expect(output.join('')).toContain('[error] myloader: 1.0.2-1')
+      expect(errors.some((line) => line.includes('[error] myloader: 1.0.2-1'))).toBe(true)
     } finally {
       writeSpy.mockRestore()
       if (previousMydumper === undefined) delete process.env.PORTEAU_MYDUMPER

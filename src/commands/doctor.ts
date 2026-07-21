@@ -10,7 +10,9 @@ import {
 
 export interface DiagnosticCommandOptions {
   readonly configFile?: string
-  readonly write?: (line: string) => void
+  readonly env?: NodeJS.ProcessEnv
+  readonly cwd?: string
+  readonly signal?: AbortSignal
   readonly diagnostics?: DiagnosticsOptions
   readonly diagnose?: typeof runDiagnostics
 }
@@ -18,16 +20,22 @@ export interface DiagnosticCommandOptions {
 export async function collectDiagnostics(
   options: DiagnosticCommandOptions = {},
 ): Promise<DiagnosticsResult> {
-  const configFile = options.configFile ? resolve(options.configFile) : undefined
-  const config = await loadConfig(configFile ? { configFile } : {})
+  const cwd = options.cwd ?? process.cwd()
+  const configFile = options.configFile ? resolve(cwd, options.configFile) : undefined
+  const config = await loadConfig({
+    ...(configFile ? { configFile } : {}),
+    cwd,
+    ...(options.env ? { env: options.env } : {}),
+  })
   const configPaths = {
     ...(config.tools.mydumper ? { mydumper: config.tools.mydumper } : {}),
     ...(config.tools.myloader ? { myloader: config.tools.myloader } : {}),
   }
   return (options.diagnose ?? runDiagnostics)({
     ...options.diagnostics,
-    cwd: configFile ? dirname(configFile) : (options.diagnostics?.cwd ?? process.cwd()),
+    cwd: configFile ? dirname(configFile) : (options.diagnostics?.cwd ?? cwd),
     configPaths,
+    ...(options.signal ? { signal: options.signal } : {}),
   })
 }
 
@@ -63,16 +71,6 @@ export function formatDiagnostics(result: DiagnosticsResult): string[] {
   return lines
 }
 
-export async function runDiagnosticCommand(
-  options: DiagnosticCommandOptions = {},
-): Promise<DiagnosticsResult> {
-  const result = await collectDiagnostics(options)
-  const write = options.write ?? ((line: string) => process.stdout.write(`${line}\n`))
-  for (const line of formatDiagnostics(result)) write(line)
-  if (!result.ok) throw new Error('Dependency diagnostics failed')
-  return result
-}
-
 export const doctorCommand = defineCommand({
   meta: {
     name: 'doctor',
@@ -84,8 +82,5 @@ export const doctorCommand = defineCommand({
       alias: 'c',
       description: 'Path to a YAML configuration file',
     },
-  },
-  async run({ args }) {
-    await runDiagnosticCommand(args.config ? { configFile: args.config } : {})
   },
 })

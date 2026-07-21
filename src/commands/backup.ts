@@ -1,8 +1,4 @@
 import { defineCommand } from 'citty'
-import { dirname, resolve } from 'node:path'
-import { runBackup } from '../core/backup.js'
-import { loadConfig } from '../core/config.js'
-
 export const backupCommand = defineCommand({
   meta: {
     name: 'backup',
@@ -19,33 +15,7 @@ export const backupCommand = defineCommand({
       alias: 'o',
       description: 'Final backup directory (must not already exist)',
     },
-  },
-  async run({ args }) {
-    const configFile = args.config ? resolve(args.config) : undefined
-    const controller = new AbortController()
-    const abort = () => controller.abort()
-    process.once('SIGINT', abort)
-    process.once('SIGTERM', abort)
-    try {
-      const config = await loadConfig(configFile ? { configFile } : {})
-      if (controller.signal.aborted) {
-        const error = new Error('Backup cancelled')
-        error.name = 'AbortError'
-        throw error
-      }
-      const result = await runBackup({
-        config,
-        configDirectory: configFile ? dirname(configFile) : process.cwd(),
-        ...(args.output ? { outputDirectory: args.output } : {}),
-        signal: controller.signal,
-        onEvent(event) {
-          if (event.type === 'warning') process.stderr.write(`warning: ${event.message}\n`)
-        },
-      })
-      process.stdout.write(`Backup completed: ${result.outputDirectory}\n`)
-    } finally {
-      process.removeListener('SIGINT', abort)
-      process.removeListener('SIGTERM', abort)
-    }
+    user: { type: 'string', description: 'Database user' },
+    database: { type: 'string', description: 'Comma-separated included databases' },
   },
 })

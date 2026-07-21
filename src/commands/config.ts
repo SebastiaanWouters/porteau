@@ -5,4 +5,7 @@ export const configCommand = defineCommand({
     name: 'config',
     description: 'Inspect the effective configuration',
   },
+  args: {
+    config: { type: 'string', alias: 'c', description: 'Path to a YAML configuration file' },
+  },
 })

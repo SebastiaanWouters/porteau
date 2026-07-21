@@ -115,16 +115,19 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
     env: environment,
     ...(config.tools.mydumper ? { configPath: config.tools.mydumper } : {}),
     cwd,
+    ...(options.signal ? { signal: options.signal } : {}),
   })
   const myloaderPath = await resolveTool('myloader', {
     env: environment,
     ...(config.tools.myloader ? { configPath: config.tools.myloader } : {}),
     cwd,
+    ...(options.signal ? { signal: options.signal } : {}),
   })
   const [mydumper, myloader] = await Promise.all([
-    inspectTool('mydumper', mydumperPath, childEnvironment),
-    inspectTool('myloader', myloaderPath, childEnvironment),
+    inspectTool('mydumper', mydumperPath, childEnvironment, options.signal),
+    inspectTool('myloader', myloaderPath, childEnvironment, options.signal),
   ])
+  options.signal?.throwIfAborted()
   assertMatchingToolVersions(mydumper, myloader)
 
   const patterns = config.include.databases.map((database) => `${database}.*`)

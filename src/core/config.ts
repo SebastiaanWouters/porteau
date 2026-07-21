@@ -164,6 +164,18 @@ function configFromEnvironment(env: NodeJS.ProcessEnv): Record<string, unknown> 
   return config
 }
 
+export function validateConfig(input: unknown): PorteauConfig {
+  try {
+    return v.parse(configSchema, input)
+  } catch (error) {
+    if (v.isValiError(error)) {
+      const messages = [...new Set(error.issues.map(sanitizedIssueMessage))]
+      throw new Error(`Invalid Porteau configuration: ${messages.join('; ')}`)
+    }
+    throw error
+  }
+}
+
 export async function loadConfig(options: LoadConfigOptions = {}): Promise<PorteauConfig> {
   if (options.configFile && !['.yaml', '.yml'].includes(extname(options.configFile))) {
     throw new Error('Porteau configuration files must use the .yaml or .yml extension')
@@ -192,13 +204,5 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Porte
     throw new Error('Unable to load Porteau configuration')
   }
 
-  try {
-    return v.parse(configSchema, loaded.config)
-  } catch (error) {
-    if (v.isValiError(error)) {
-      const messages = [...new Set(error.issues.map(sanitizedIssueMessage))]
-      throw new Error(`Invalid Porteau configuration: ${messages.join('; ')}`)
-    }
-    throw error
-  }
+  return validateConfig(loaded.config)
 }

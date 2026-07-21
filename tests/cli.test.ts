@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vite-plus/test'
 import { executeCli, mainCommand } from '../src/cli.js'
 
 describe('CLI contract', () => {
-  it('advertises the phase-one command surface', async () => {
+  it('advertises the complete command surface', async () => {
     const usage = await renderUsage(mainCommand)
 
     for (const command of ['backup', 'restore', 'init', 'setup', 'doctor', 'config']) {

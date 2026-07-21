@@ -39,7 +39,7 @@ When zero primary write interruption is required, Porteau recommends and support
 | Configuration | c12 + Porteau merger | YAML discovery with replacement precedence and Valibot validation |
 | Validation | Valibot | Runtime validation of config, flags, manifests, and normalized events |
 | MySQL protocol | `mysql2` 3.23.0 | Catalog, privilege, capability, and destination preflight queries without depending on the `mysql` CLI |
-| Structured errors | nostics.dev | Actionable domain errors rendered at the CLI boundary |
+| Structured errors | `nostics` | Actionable domain errors rendered at the CLI boundary |
 | Backup engine | mydumper/myloader v1 | Pinned, capability-tested external binaries |
 | Full-screen terminal UI | None | Conventional terminal output is simpler and more portable |
 
@@ -126,14 +126,14 @@ porteau/
 ├── vite.config.ts
 ├── porteau.config.yaml              # Example configuration (planned)
 ├── src/
-│   ├── cli.ts                       # citty entrypoint and temporary plain error boundary (implemented)
+│   ├── cli.ts                       # citty metadata and CLI-owned runtime/error boundary
 │   ├── commands/
-│   │   ├── backup.ts                # Non-interactive backup command (implemented)
+│   │   ├── backup.ts                # Backup command metadata; guided orchestration is CLI-owned
 │   │   ├── restore.ts               # Command skeleton; destination mutation waits for Phase 5
-│   │   ├── init.ts                  # Command skeleton
+│   │   ├── init.ts                  # Guided, create-exclusive YAML configuration metadata
 │   │   ├── setup.ts                 # Read-only checks, plan rendering, and approved Ubuntu setup
 │   │   ├── doctor.ts                # Read-only dependency diagnostics (implemented)
-│   │   └── config.ts                # Command skeleton
+│   │   └── config.ts                # Secret-safe effective configuration metadata
 │   ├── core/
 │   │   ├── engine.ts                # Narrow engine capabilities and request types
 │   │   ├── backup.ts                # Safe backup orchestration and atomic publication
@@ -155,17 +155,10 @@ porteau/
 │   │   ├── ubuntu.ts                # Guarded Ubuntu planner and approved apt executor
 │   │   └── diagnostics.ts           # Shared read-only dependency diagnostics
 │   ├── presentation/
-│   │   ├── context.ts               # TTY, CI, color, verbosity, JSON, and prompt policy (planned Phase 4)
-│   │   ├── prompts.ts               # Thin @clack/prompts wrappers (planned Phase 4)
-│   │   ├── progress.ts              # Interactive/non-interactive progress sinks (planned Phase 4)
-│   │   ├── output.ts                # consola and final summaries (planned Phase 4)
-│   │   └── redaction.ts             # Centralized redaction (planned Phase 4)
-│   └── errors/                       # Structured domain errors (planned Phase 4)
-│       ├── artifact.ts
-│       ├── config.ts
-│       ├── dependency.ts
-│       ├── preflight.ts
-│       └── process.ts
+│   │   ├── context.ts               # TTY, CI, color, verbosity, JSON, and output policy
+│   │   ├── prompts.ts               # Thin @clack/prompts wrappers
+│   │   ├── progress.ts              # Interactive progress sink
+│   │   └── redaction.ts             # Centralized redaction
 ├── scripts/
 │   └── generate-install-script.ts   # Embeds validated manifest/policy into install.sh
 └── tests/
@@ -523,6 +516,18 @@ Use Clack for:
 - `--yes`: approve documented confirmations but never invent missing required values.
 - Respect `NO_COLOR` and terminal color capability.
 
+### Public JSON Lines v1
+
+`--json` emits one JSON object per line on stdout and never prompts or emits decorative output. Every invocation ends with exactly one `result` or `error` envelope:
+
+```text
+{ "schemaVersion": 1, "type": "event",  "command": "backup", "event": { ... } }
+{ "schemaVersion": 1, "type": "result", "command": "backup", "ok": true, "result": { ... } }
+{ "schemaVersion": 1, "type": "error",  "command": "backup", "ok": false, "error": { "code": "...", "message": "..." } }
+```
+
+Event payloads are an allow-listed projection of Porteau normalized events. Native `sourceEvent`, `sourcePhase`, and `sourceStatus` fields, configuration passwords, raw errors, causes, and stacks are not public. Large native counters remain decimal strings. Setup emits its complete pre-approval mutation plan as an event in JSON mode.
+
 ### Clack/consola coordination
 
 - Suspend consola transient output while a Clack prompt/progress renderer is active.
@@ -781,7 +786,7 @@ Requirements:
 - Output-directory and disk-space status.
 - Suggested correction for every failed check.
 
-Current implementation status: the read-only dependency slice reports OS/codename/Debian architecture and automatic-setup support, the Node version boundary, independent mydumper/myloader resolution source/path and exact versions, pair compatibility, and actionable corrections. `setup --check` reuses this result. `setup` renders the exact supported-Ubuntu mutation plan, and `setup --yes` executes it through the explicit Phase 3 approval boundary with cancellation gates. Porteau-version/effective-config-file reporting, shared machine-log capability diagnostics, database/catalog/privilege checks, replica state, and output-directory capacity remain future doctor enhancements in Phases 4 and 5.
+Current implementation status: the read-only dependency slice reports OS/codename/Debian architecture and automatic-setup support, the Node version boundary, independent mydumper/myloader resolution source/path and exact versions, pair compatibility, and actionable corrections. `setup --check` reuses this result. `setup` renders the exact supported-Ubuntu mutation plan, and approved interactive or `--yes` execution crosses the explicit Phase 3 approval boundary. Porteau-version/effective-config-file reporting, shared machine-log capability diagnostics, database/catalog/privilege checks, replica state, and output-directory capacity remain future doctor enhancements.
 
 ---
 
@@ -814,7 +819,7 @@ Development must not require running `install.sh` against the host. Installer un
 
 ## 16. Test strategy
 
-Tests are added with the phase that introduces the behavior. Phase 2 turned the initial subprocess convention into reusable fixture executables and pinned observed native machine-log fixtures. The default Vitest run currently has 87 passing tests and three skipped opt-in MySQL tests. Deterministic tests use injected MySQL protocol connections and subprocess fixtures. Phase 3 also committed host-guarded installer and real-MySQL Docker/Compose harnesses; they require an external Docker runner and have not been executed in the current orb. Presentation-mode tests still wait for Phase 4. No later phase should replace or weaken an earlier safety gate.
+Tests are added with the phase that introduces the behavior. Phase 2 turned the initial subprocess convention into reusable fixture executables and pinned observed native machine-log fixtures. The default Vitest run currently has 115 passing tests and three skipped opt-in MySQL tests. Deterministic tests use injected MySQL protocol connections and subprocess fixtures. Phase 3 also committed host-guarded installer and real-MySQL Docker/Compose harnesses; they require an external Docker runner and have not been executed in the current orb. Phase 4 adds presentation-context and command-level guided-flow coverage. No later phase should replace or weaken an earlier safety gate.
 
 ### Unit tests
 
@@ -903,7 +908,7 @@ Do not claim production safety based only on mocked subprocess tests.
 
 Phase 2 deliberately fails closed outside its qualified boundary. MariaDB and non-8.x MySQL are rejected. Routines/events await catalog and artifact qualification. CA-verified TLS modes await explicit CA configuration, and `preferred` requires TLS rather than retrying plaintext. The grant parser intentionally does not interpret roles, column/table grants, or other ambiguous SQL forms; those scopes cannot prove full catalog visibility. Artifact verification intentionally supports only the qualified flat layout rather than arbitrary recursive layouts. Nontransactional expert exports are rejected, and verifiable artifact identifiers use a conservative filename-safe subset. Process-tree guarantees are currently POSIX/qualified-Ubuntu guarantees. These are explicit future extensions, not silent fallbacks.
 
-The committed Phase 1 types are foundations, not frozen external APIs. `BackupRequest`, `RestoreRequest`, and `EngineCapabilities` are deliberately minimal and should grow from concrete requirements in their owning phases. Preserve the `BackupEngine` isolation boundary and normalized-event discriminant, but prefer extending these types over creating parallel command-specific request models. Phase 2 consumes only the backup-facing structural subset of `BackupEngine` (`inspect`, `backup`, and `verifyArtifact`); no concrete adapter claims to implement the full interface until Phase 5 adds `restore`. The CLI has no public JSON event compatibility promise until its schema is documented and versioned in Phase 4.
+The committed Phase 1 types are foundations, not frozen external APIs. `BackupRequest`, `RestoreRequest`, and `EngineCapabilities` are deliberately minimal and should grow from concrete requirements in their owning phases. Preserve the `BackupEngine` isolation boundary and normalized-event discriminant, but prefer extending these types over creating parallel command-specific request models. Phase 2 consumes only the backup-facing structural subset of `BackupEngine` (`inspect`, `backup`, and `verifyArtifact`); no concrete adapter claims to implement the full interface until Phase 5 adds `restore`. Phase 4 establishes the first public Porteau JSON Lines envelope described in Section 10; native event fields outside its allow-list remain internal.
 
 ### Phase 3 implementation complete; external container qualification pending (2026-07-21)
 
@@ -920,7 +925,7 @@ Phase 3 added the manifest-backed Ubuntu planner/executor, explicit `--yes` appr
 The Phase 2 production dependency set is c12, citty, mysql2, and Valibot. Add remaining dependencies in their owning phase:
 
 - Phase 3: no presentation dependency; setup/doctor expose pure diagnostics, and setup keeps planning, rendering, explicit approval, and execution separate.
-- Phase 4: `@clack/prompts`, consola, and nostics.dev, after their exact APIs and supported Node range are verified.
+- Phase 4: pinned `@clack/prompts`, `consola`, and `nostics`; no dependency-owned reporter or formatter defines Porteau's public output.
 
 Do not import Clack or consola into `src/core` or `src/setup`. Do not make backup correctness depend on presentation, and do not make the generated installer depend on Node or the built CLI at runtime.
 
@@ -933,10 +938,10 @@ Do not import Clack or consola into `src/core` or `src/setup`. Do not make backu
 | Phase 1 — baseline and contracts | Complete | None within its qualified boundary |
 | Phase 2 — safe backup integration | Complete | None; broader qualification items are tracked in Section 16 |
 | Phase 3 — diagnostics and setup | Implementation complete | None; run the committed Ubuntu installer matrix and MySQL harness on suitable external Docker runners |
-| Phase 4 — presentation and guided flows | **Not implemented; next phase** | Entire phase described below |
+| Phase 4 — presentation and guided flows | Complete | None within its implemented command and output boundary |
 | Phase 5 — guarded restore and release | **Not implemented** | Entire phase described below |
 
-There is no Phase 6 in this plan. The only phases still requiring product implementation are Phases 4 and 5.
+There is no Phase 6 in this plan. Phase 5 is the only phase still requiring product implementation.
 
 ### Phase 1 — Verification baseline and contracts (complete)
 
@@ -987,9 +992,9 @@ The generator must consume validated canonical data, but the committed `install.
 
 **Implementation gate:** diagnostics and `--check` are provably read-only, mutation requires explicit approval, generated Bash is deterministic and standalone, and all package checks pass. **External qualification still to run:** execute the committed idempotency and integration matrices on supported Ubuntu amd64/arm64 Docker runners.
 
-### Phase 4 — Presentation boundary and guided backup/setup experience (not implemented; next)
+### Phase 4 — Presentation boundary and guided backup/setup experience (complete)
 
-- Add and verify `@clack/prompts`, consola, and nostics.dev against the supported Node matrix.
+- Added pinned `@clack/prompts`, `consola`, and `nostics` (the npm package name) and verified their Node/runtime APIs. Nostics has no automatic reporter; Porteau owns JSON normalization.
 - Implement presentation context and the top-level error/exit-code boundary before adding prompts.
 - Add thin Clack wrappers and consistent cancellation. Keep prompt results as command inputs; core/setup services remain non-interactive.
 - Add guided backup, init, setup, doctor, and config flows. Restore can inspect/verify an artifact here, but destination mutation remains Phase 5.
@@ -999,6 +1004,8 @@ The generator must consume validated canonical data, but the committed `install.
 - Test TTY, non-TTY, CI, redirected output, no-color, `--yes`, and `--no-interactive` behavior.
 
 **Exit gate:** every interactive input has a flag/config/environment equivalent, `--json` and non-TTY modes never prompt or animate, errors render once with stable exit codes, setup uses the Phase 3 approval boundary, and presentation imports do not cross into core/setup.
+
+Completed on 2026-07-21 with a single CLI-owned abort/signal and injected-I/O presentation boundary. Human and versioned JSONL modes cover backup, setup, doctor, init, and read-only config; restore remains Phase 5. Setup always discloses the complete mutation plan before crossing the existing typed approval boundary. Guided backup prompts only for missing user, password, and database values, and passwords remain unavailable on argv. The current unit suite has 115 passing tests (plus 3 skipped integration tests). External Ubuntu architecture/Node and Docker qualification matrices remain pending.
 
 ### Phase 5 — Guarded restore, operational verification, and release packaging (not implemented)
 
@@ -1027,7 +1034,7 @@ The generator must consume validated canonical data, but the committed `install.
 | Guided interaction | `@clack/prompts` | High |
 | Human/non-interactive logs | consola | High |
 | Config | YAML + c12 + replacement merger + Valibot | High |
-| Structured errors | nostics.dev | High |
+| Structured errors | `nostics` with a Porteau-owned renderer | High |
 | Primary engine | Pinned mydumper/myloader v1 | High |
 | Initial engine release | v1.0.3-1 | High |
 | MySQL Shell | Deferred optional backend | Medium |
@@ -1045,4 +1052,4 @@ The generator must consume validated canonical data, but the committed `install.
 | Standalone packaging | Experimental secondary artifact later | Medium |
 | Full-screen terminal UI | None | High |
 
-Phases 1 and 2 are complete within the qualified boundary in Section 17. Phase 3 implementation is complete; its installer and MySQL qualification matrices are committed but still need execution on suitable external Docker runners. Phases 4 and 5 are the only phases still to be implemented: Phase 4 adds the presentation/guided experience and public JSON contract, and Phase 5 adds guarded restore plus release packaging. Future work must preserve the existing safety, compatibility, event, artifact, and installer contracts while correcting assumptions whenever qualification against pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.
+Phases 1, 2, and 4 are complete within their qualified boundaries in Sections 17 and 18. Phase 3 implementation is complete; its installer and MySQL qualification matrices are committed but still need execution on suitable external Docker runners. Phase 5 is the only phase still requiring product implementation and adds guarded restore plus release packaging. Future work must preserve the existing safety, compatibility, event, artifact, installer, presentation, and public JSON contracts while correcting assumptions whenever qualification against pinned native binaries provides stronger evidence. Porteau’s value is not merely forwarding flags: it is making fast logical backups understandable, observable, reproducible, and safe by default.
