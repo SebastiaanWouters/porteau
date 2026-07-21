@@ -61,6 +61,18 @@ describe('read-only setup diagnostics', () => {
     })
   })
 
+  it('uses Debian architecture rather than the Node runtime architecture for installation support', async () => {
+    const result = await runDiagnostics({
+      platform: 'linux',
+      nodeVersion: '22.18.0',
+      readTextFile: async () => ubuntuRelease,
+      readDebianArchitecture: async () => 'arm64\n',
+      ...toolDependencies(),
+    })
+
+    expect(result.system).toMatchObject({ supported: true, architecture: 'arm64' })
+  })
+
   it('checks tools independently and returns actionable failures instead of throwing', async () => {
     const resolved: string[] = []
     const result = await runDiagnostics({

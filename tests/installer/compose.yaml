@@ -1,0 +1,12 @@
+services:
+  ubuntu-2204:
+    build:
+      { context: ../.., dockerfile: tests/installer/Dockerfile, args: { UBUNTU_VERSION: '22.04' } }
+  ubuntu-2404:
+    build:
+      { context: ../.., dockerfile: tests/installer/Dockerfile, args: { UBUNTU_VERSION: '24.04' } }
+  ubuntu-2404-arm64:
+    profiles: [arm64]
+    platform: linux/arm64
+    build:
+      { context: ../.., dockerfile: tests/installer/Dockerfile, args: { UBUNTU_VERSION: '24.04' } }

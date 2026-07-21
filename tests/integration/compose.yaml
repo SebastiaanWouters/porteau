@@ -1,0 +1,18 @@
+services:
+  mysql:
+    image: mysql:8.4.10
+    environment:
+      MYSQL_ROOT_PASSWORD: qualification-only
+    healthcheck:
+      test: [CMD, mysqladmin, ping, -h, localhost, -pqualification-only]
+      interval: 2s
+      timeout: 2s
+      retries: 40
+  qualification:
+    build: { context: ../.., dockerfile: tests/integration/Dockerfile }
+    environment:
+      PORTEAU_MYSQL_INTEGRATION: '1'
+      MYSQL_HOST: mysql
+      MYSQL_PWD: qualification-only
+    depends_on:
+      mysql: { condition: service_healthy }

@@ -9,5 +9,5 @@
     "resolveJsonModule": true,
     "types": ["node", "vite-plus/test/globals"]
   },
-  "include": ["src", "tests", "vite.config.ts"]
+  "include": ["src", "scripts", "tests", "vite.config.ts"]
 }

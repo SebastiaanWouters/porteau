@@ -1,0 +1,252 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vite-plus/test'
+import { renderInstallScript } from '../scripts/generate-install-script.js'
+import type { DiagnosticsResult } from '../src/setup/diagnostics.js'
+import {
+  approvedInstall,
+  executeInstallPlan,
+  planUbuntuInstall,
+  renderInstallPlan,
+  type InstallerDependencies,
+} from '../src/setup/ubuntu.js'
+
+const diagnostics = {
+  system: {
+    status: 'ok',
+    platform: 'linux',
+    name: 'Ubuntu',
+    version: '24.04',
+    codename: 'noble',
+    architecture: 'amd64',
+    supported: true,
+  },
+  node: { status: 'error', version: '20.0.0', minimumVersion: '22.18.0' },
+  tools: {
+    mydumper: { name: 'mydumper', status: 'error' },
+    myloader: { name: 'myloader', status: 'error' },
+  },
+  toolPair: { status: 'error' },
+  ok: false,
+} as DiagnosticsResult
+
+describe('Ubuntu installer policy and execution', () => {
+  it('selects only the exact manifest target and renders reviewed mutation details', () => {
+    const plan = planUbuntuInstall(diagnostics, { VOLTA_HOME: '/volta' })
+    const rendered = renderInstallPlan(plan).join('\n')
+    expect(plan.asset?.filename).toBe('mydumper_1.0.3-1.noble_amd64.deb')
+    expect(rendered).toContain(plan.asset!.sha256)
+    expect(rendered).toContain('deb [signed-by=')
+    expect(rendered).toContain('sudo apt-get update')
+    expect(rendered).toContain('apt-cache madison nodejs')
+    expect(rendered).toContain('nodejs=<validated NodeSource 24 candidate>')
+    expect(plan.warnings[0]).toContain('VOLTA_HOME')
+  })
+
+  it('does not install for a matching-looking tuple from an unsupported system', () => {
+    const plan = planUbuntuInstall({
+      ...diagnostics,
+      system: { ...diagnostics.system, platform: 'darwin', supported: false },
+    })
+    expect(plan.supported).toBe(false)
+    expect(plan.asset).toBeUndefined()
+  })
+
+  it('rejects forged approval before creating temporary state', async () => {
+    const makeTemporaryDirectory = vi.fn(async () => '/tmp/never')
+    await expect(
+      executeInstallPlan(
+        planUbuntuInstall(diagnostics),
+        { kind: 'approved' },
+        {
+          makeTemporaryDirectory,
+          download: vi.fn(),
+          run: vi.fn(),
+          remove: vi.fn(),
+        },
+      ),
+    ).rejects.toThrow('typed installation approval')
+    expect(makeTemporaryDirectory).not.toHaveBeenCalled()
+  })
+
+  it('verifies downloads before sudo and cleans up on checksum failure', async () => {
+    const commands: string[] = []
+    const plan = planUbuntuInstall({
+      ...diagnostics,
+      node: { ...diagnostics.node, status: 'ok' },
+    })
+    const dependencies: InstallerDependencies = {
+      makeTemporaryDirectory: () => mkdtemp(join(tmpdir(), 'porteau-installer-test-')),
+      download: async (_url, path) => writeFile(path, Buffer.alloc(plan.asset!.size)),
+      run: async (command) => {
+        commands.push(command)
+        return { stdout: '' }
+      },
+      remove: vi.fn((path: string) => rm(path, { recursive: true, force: true })),
+    }
+    await expect(executeInstallPlan(plan, approvedInstall, dependencies)).rejects.toThrow(
+      'checksum mismatch',
+    )
+    expect(commands).not.toContain('sudo')
+    expect(dependencies.remove).toHaveBeenCalled()
+  })
+
+  it('refuses to repair an authoritative invalid explicit tool path', () => {
+    const plan = planUbuntuInstall({
+      ...diagnostics,
+      tools: {
+        ...diagnostics.tools,
+        mydumper: {
+          name: 'mydumper',
+          status: 'error',
+          source: 'config',
+          path: '/configured/missing',
+        },
+      },
+    })
+    expect(plan.blockers).toEqual([
+      'The explicit mydumper config path remains authoritative and cannot be repaired by APT: /configured/missing',
+    ])
+  })
+
+  it('does not begin another operation after cancellation and still cleans up', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'porteau-abort-installer-test-'))
+    const controller = new AbortController()
+    const run = vi.fn(async () => ({ stdout: '' }))
+    const remove = vi.fn((path: string) => rm(path, { recursive: true, force: true }))
+    const plan = planUbuntuInstall({
+      ...diagnostics,
+      tools: {
+        mydumper: { name: 'mydumper', status: 'ok', version: '1.0.3-1' },
+        myloader: { name: 'myloader', status: 'ok', version: '1.0.3-1' },
+      },
+      toolPair: { status: 'ok' },
+    })
+
+    await expect(
+      executeInstallPlan(
+        plan,
+        approvedInstall,
+        {
+          makeTemporaryDirectory: async () => directory,
+          async download(_url, path) {
+            await writeFile(path, 'partial download')
+            controller.abort()
+          },
+          run,
+          remove,
+        },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(run).not.toHaveBeenCalled()
+    expect(remove).toHaveBeenCalledWith(directory)
+  })
+
+  it('rejects a signing-key bundle containing an additional primary key before sudo', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'porteau-key-installer-test-'))
+    const commands: string[] = []
+    const plan = planUbuntuInstall({
+      ...diagnostics,
+      tools: {
+        mydumper: { name: 'mydumper', status: 'ok', version: '1.0.3-1' },
+        myloader: { name: 'myloader', status: 'ok', version: '1.0.3-1' },
+      },
+      toolPair: { status: 'ok' },
+    })
+    await expect(
+      executeInstallPlan(plan, approvedInstall, {
+        makeTemporaryDirectory: async () => directory,
+        async download(_url, path) {
+          await writeFile(path, 'test key')
+        },
+        async run(command) {
+          commands.push(command)
+          return {
+            stdout:
+              'pub:::::::::\nfpr:::::::::6F71F525282841EEDAF851B42F59B5F99B1BE0B4:\npub:::::::::\nfpr:::::::::AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:\n',
+          }
+        },
+        remove: (path) => rm(path, { recursive: true, force: true }),
+      }),
+    ).rejects.toThrow('fingerprint mismatch')
+    expect(commands).not.toContain('sudo')
+  })
+
+  it('verifies Node, npm, and cleanup after an approved Node-only installation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'porteau-node-installer-test-'))
+    const commands: string[] = []
+    const remove = vi.fn((path: string) => rm(path, { recursive: true, force: true }))
+    await executeInstallPlan(
+      planUbuntuInstall({
+        ...diagnostics,
+        tools: {
+          mydumper: { name: 'mydumper', status: 'ok', version: '1.0.3-1' },
+          myloader: { name: 'myloader', status: 'ok', version: '1.0.3-1' },
+        },
+        toolPair: { status: 'ok' },
+      }),
+      approvedInstall,
+      {
+        makeTemporaryDirectory: async () => directory,
+        async download(_url, path) {
+          await writeFile(path, 'test key')
+        },
+        async run(command, args) {
+          commands.push(`${command} ${args.join(' ')}`)
+          if (command === 'gpg' && args.includes('--show-keys'))
+            return {
+              stdout:
+                'pub:::::::::6F71F525282841EE:\nfpr:::::::::6F71F525282841EEDAF851B42F59B5F99B1BE0B4:\n',
+            }
+          if (command === 'gpg' && args.includes('--dearmor')) {
+            await writeFile(args[args.indexOf('--output') + 1]!, 'keyring')
+          }
+          if (command === 'node') return { stdout: 'v24.1.0\n' }
+          if (command === 'npm') return { stdout: '11.0.0\n' }
+          if (command === 'mydumper')
+            return args.includes('--help')
+              ? { stdout: '--machine-log-json\n' }
+              : {
+                  stdout: 'mydumper v1.0.3-1, built against MySQL 8.0.0 with SSL support\n',
+                }
+          if (command === 'myloader')
+            return args.includes('--help')
+              ? { stdout: '--machine-log-json\n' }
+              : {
+                  stdout: 'myloader v1.0.3-1, built against MySQL 8.0.0 with SSL support\n',
+                }
+          if (command === 'apt-cache')
+            return {
+              stdout:
+                ' nodejs | 24.1.0-1nodesource1 | https://deb.nodesource.com/node_24.x nodistro/main amd64 Packages\n',
+            }
+          return { stdout: '' }
+        },
+        remove,
+      },
+    )
+
+    expect(commands).toContain('sudo apt-get install --yes nodejs=24.1.0-1nodesource1')
+    expect(commands).toContain('node --version')
+    expect(commands).toContain('npm --version')
+    expect(commands.at(-1)).toBe('myloader --help')
+    expect(remove).toHaveBeenCalledWith(directory)
+  })
+})
+
+describe('standalone generated installer', () => {
+  it('matches the committed artifact byte-for-byte', async () => {
+    expect(await readFile('install.sh', 'utf8')).toBe(renderInstallScript())
+  })
+
+  it('is standalone and contains fail-closed bootstrap controls', () => {
+    const script = renderInstallScript()
+    expect(script).toContain('set -Eeuo pipefail')
+    expect(script).toContain('nodistro main')
+    expect(script).toContain('6F71F525282841EEDAF851B42F59B5F99B1BE0B4')
+    expect(script).not.toContain('setup_24.x')
+    expect(script).not.toMatch(/\beval\b/u)
+  })
+})

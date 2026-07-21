@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import {
   inspectToolVersion,
   resolveToolInfo,
@@ -8,6 +10,10 @@ import {
   type ToolResolutionSource,
 } from '../core/tools.js'
 import { compatibilityManifest } from './manifest.js'
+import { minimumNodeVersion, supportedTargetDescription } from './policy.js'
+
+const execFileAsync = promisify(execFile)
+export { minimumNodeVersion } from './policy.js'
 
 export type DiagnosticStatus = 'ok' | 'warning' | 'error'
 
@@ -57,6 +63,7 @@ export interface DiagnosticsOptions {
   readonly cwd?: string
   readonly platform?: NodeJS.Platform
   readonly architecture?: string
+  readonly readDebianArchitecture?: () => Promise<string>
   readonly nodeVersion?: string
   readonly osReleasePath?: string
   readonly configPaths?: Partial<Record<ToolName, string>>
@@ -64,8 +71,6 @@ export interface DiagnosticsOptions {
   readonly resolve?: typeof resolveToolInfo
   readonly inspect?: typeof inspectToolVersion
 }
-
-export const minimumNodeVersion = '22.18.0'
 
 function parseOsRelease(contents: string): Record<string, string> {
   const values: Record<string, string> = {}
@@ -103,7 +108,18 @@ function versionAtLeast(actual: string, minimum: string): boolean {
 
 async function diagnoseSystem(options: DiagnosticsOptions): Promise<SystemDiagnostic> {
   const platform = options.platform ?? process.platform
-  const architecture = debianArchitecture(options.architecture ?? process.arch)
+  let architecture = debianArchitecture(options.architecture ?? process.arch)
+  if (platform === 'linux' && options.architecture === undefined) {
+    try {
+      architecture = (
+        options.readDebianArchitecture
+          ? await options.readDebianArchitecture()
+          : (await execFileAsync('dpkg', ['--print-architecture'], { encoding: 'utf8' })).stdout
+      ).trim()
+    } catch {
+      architecture = 'unknown'
+    }
+  }
   let release: Record<string, string> = {}
   if (platform === 'linux') {
     try {
@@ -138,8 +154,7 @@ async function diagnoseSystem(options: DiagnosticsOptions): Promise<SystemDiagno
     supported,
     ...(!supported
       ? {
-          correction:
-            'Automatic setup supports Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64/arm64; install mydumper and myloader manually on this system.',
+          correction: `Automatic setup supports ${supportedTargetDescription}; install mydumper and myloader manually on this system.`,
         }
       : {}),
   }
