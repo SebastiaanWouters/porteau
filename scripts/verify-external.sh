@@ -21,43 +21,47 @@ docker compose version >/dev/null
 
 project_base="${PORTEAU_COMPOSE_PROJECT:-porteau-${UID:-0}-$$}"
 mysql_project="${project_base}-mysql"
-installer_project=''
 
-cleanup_mysql() {
-  docker compose --project-name "$mysql_project" -f tests/integration/compose.yaml down -v
+declare -a COMPOSE_PROJECTS=()
+
+register() {
+  COMPOSE_PROJECTS+=("$1:$2")
 }
 
-cleanup_installer() {
-  docker compose --project-name "$installer_project" -f tests/installer/compose.yaml down -v
+cleanup() {
+  local entry project file
+  for entry in "${COMPOSE_PROJECTS[@]}"; do
+    project="${entry%%:*}"
+    file="${entry#*:}"
+    docker compose --project-name "$project" -f "$file" down -v || true
+  done
 }
+
+trap cleanup EXIT
 
 mysql() {
   local compose=(
     docker compose --project-name "$mysql_project" -f tests/integration/compose.yaml
   )
-  trap cleanup_mysql EXIT
+  register "$mysql_project" tests/integration/compose.yaml
   "${compose[@]}" up --build --abort-on-container-exit --exit-code-from qualification
-  cleanup_mysql
-  trap - EXIT
 }
 
 installer() {
   local service="$1"
-  installer_project="${project_base}-${service}"
+  local installer_project="${project_base}-${service}"
   local compose=(
     docker compose --project-name "$installer_project" -f tests/installer/compose.yaml
   )
   if [[ "$service" == ubuntu-2404-arm64 ]]; then
     compose+=(--profile arm64)
   fi
-  trap cleanup_installer EXIT
+  register "$installer_project" tests/installer/compose.yaml
   "${compose[@]}" build "$service"
   local run=("${compose[@]}" run --rm)
   [[ "${PORTEAU_RELEASE_TEST:-0}" == 1 ]] && run+=(-e PORTEAU_RELEASE_TEST=1)
   [[ -n "${PORTEAU_INSTALL_URL:-}" ]] && run+=(-e "PORTEAU_INSTALL_URL=$PORTEAU_INSTALL_URL")
   "${run[@]}" "$service"
-  cleanup_installer
-  trap - EXIT
 }
 
 target="${1:-all}"
