@@ -43,7 +43,7 @@ if (
   release.version !== process.env.VERSION ||
   release.bin?.porteau !== 'dist/cli.mjs' ||
   release.license !== 'Apache-2.0' ||
-  release.repository?.url !== 'git+https://github.com/sebastiaanwouters/porteau.git' ||
+  release.repository?.url !== 'git+https://github.com/SebastiaanWouters/porteau.git' ||
   release.dist?.integrity !== process.env.INTEGRITY
 )
   process.exit(20)

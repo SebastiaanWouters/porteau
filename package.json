@@ -10,11 +10,11 @@
     "myloader",
     "cli"
   ],
-  "homepage": "https://github.com/sebastiaanwouters/porteau#readme",
-  "bugs": "https://github.com/sebastiaanwouters/porteau/issues",
+  "homepage": "https://github.com/SebastiaanWouters/porteau#readme",
+  "bugs": "https://github.com/SebastiaanWouters/porteau/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sebastiaanwouters/porteau.git"
+    "url": "git+https://github.com/SebastiaanWouters/porteau.git"
   },
   "license": "Apache-2.0",
   "type": "module",

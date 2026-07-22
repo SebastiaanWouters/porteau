@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vite-plus/test'
 
 const readmePath = fileURLToPath(new URL('../README.md', import.meta.url))
-const mainInstallUrl = 'https://raw.githubusercontent.com/sebastiaanwouters/porteau/main/install.sh'
+const mainInstallUrl = 'https://raw.githubusercontent.com/SebastiaanWouters/porteau/main/install.sh'
 
 describe('install docs', () => {
   it('documents main install.sh and no versioned primary pins', async () => {

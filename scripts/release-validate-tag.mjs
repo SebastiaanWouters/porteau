@@ -111,7 +111,7 @@ run('git', ['merge-base', '--is-ancestor', sha, 'origin/main'])
 
 if (metadata.name !== 'porteau') throw new Error('Unexpected package name')
 if (metadata.license !== 'Apache-2.0') throw new Error('Unexpected package license')
-if (metadata.repository?.url !== 'git+https://github.com/sebastiaanwouters/porteau.git')
+if (metadata.repository?.url !== 'git+https://github.com/SebastiaanWouters/porteau.git')
   throw new Error('Unexpected package repository')
 if (metadata.publishConfig?.tag !== 'next')
   throw new Error('Alpha releases must publish under the next dist-tag')
