@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-tarball="${1:?Usage: release-publish-npm.sh <porteau.tgz>}"
+tarball="$(realpath "${1:?Usage: release-publish-npm.sh <porteau.tgz>}")"
 version="${GITHUB_REF_NAME#v}"
 [[ -n "$version" ]] || {
   echo 'GITHUB_REF_NAME is required' >&2
