@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path'
-import { defaultServer, overlayDefaultServer } from '../core/config.js'
-import { asDatabaseId, effectiveUser, resolveRun, type Selection } from '../core/runtime-config.js'
-import { normalizeList, normalizeRequired, promptOrAbort } from './shared.js'
+import { applyConfigOverlay } from '../core/config.js'
+import { effectiveUser, resolveRun } from '../core/runtime-config.js'
+import { normalizeRequired, promptOrAbort, resolveCatalogSelection } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
 export const backupCommand = defineCommand({
@@ -21,6 +21,10 @@ export const backupCommand = defineCommand({
       description: 'Final backup directory (must not already exist)',
     },
     user: { type: 'string', description: 'Database user' },
+    server: {
+      type: 'string',
+      description: 'Server catalog key (defaults.server when omitted)',
+    },
     database: {
       type: 'string',
       description: 'Comma-separated catalog database keys (defaults.database when omitted)',
@@ -35,12 +39,26 @@ export const backupCommand = defineCommand({
       env,
       ...(configFile ? { configFile } : {}),
     })
-    if (values.user) config = overlayDefaultServer(config, { user: String(values.user) })
     signal.throwIfAborted()
-    const server = defaultServer(config)
-    presentation.registerSecret(server.password)
-    let user = server.user
-    let password = server.password
+
+    const { selection, serverKey } = await resolveCatalogSelection({
+      config,
+      ...(values.server !== undefined ? { serverFlag: String(values.server) } : {}),
+      ...(values.database !== undefined ? { databaseFlag: String(values.database) } : {}),
+      interactive: presentation.interactive,
+      prompts,
+      signal,
+      databaseArity: 'many',
+    })
+
+    const selected = config.servers[serverKey]
+    if (selected === undefined) {
+      const known = Object.keys(config.servers).sort().join(', ')
+      throw new Error(`Unknown server "${serverKey}". Known servers: ${known || '(none)'}`)
+    }
+    presentation.registerSecret(selected.password)
+    let user = values.user !== undefined ? String(values.user) : selected.user
+    let password = selected.password
     if (user !== undefined) user = normalizeRequired(user, 'Database user')
     if (presentation.interactive) {
       if (!user)
@@ -61,17 +79,12 @@ export const backupCommand = defineCommand({
       throw new Error(
         'Backup requires a database user, password, and at least one included database',
       )
-    config = overlayDefaultServer(config, { user, password })
+    config = applyConfigOverlay(config, {
+      servers: { [serverKey]: { user, password } },
+    })
     signal.throwIfAborted()
-    presentation.registerSecret(defaultServer(config).password)
+    presentation.registerSecret(config.servers[serverKey]?.password)
 
-    const selection: Selection | undefined = values.database
-      ? {
-          databases: normalizeList(values.database, '--database').map((token) =>
-            asDatabaseId(token),
-          ),
-        }
-      : undefined
     const run = resolveRun(config, selection, { configDirectory })
     const loginUser = effectiveUser(run, run.databases[0])
     if (!loginUser)

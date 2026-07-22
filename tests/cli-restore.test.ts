@@ -23,6 +23,173 @@ describe('guarded restore CLI', () => {
     binlogPolicy: 'disable' as const,
   }
 
+  it('defaults server and database when selection flags are omitted', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-defaults-'))
+    roots.push(cwd)
+    let received: Parameters<CliServices['runRestore']>[0]
+    expect(
+      await executeCli({
+        args: [
+          'restore',
+          '--yes',
+          '--artifact',
+          './artifact',
+          '--destination-database',
+          'restored',
+        ],
+        cwd,
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        services: {
+          loadConfig: async () => restoreConfig(),
+          runRestore: async (options) => {
+            received = options
+            return { destinationDatabase: 'restored', warnings: 0 }
+          },
+        },
+      }),
+    ).toBe(0)
+    expect(received!.run.server.id).toBe('local')
+    expect(received!.run.databases[0]).toMatchObject({ id: 'app', name: 'app' })
+  })
+
+  it('selects --server staging and uses that server credentials', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-server-'))
+    roots.push(cwd)
+    const multi = {
+      ...restoreConfig(),
+      servers: {
+        local: {
+          host: '127.0.0.1',
+          port: 3306,
+          user: 'local-user',
+          password: 'local-secret',
+          tls: 'preferred' as const,
+        },
+        staging: {
+          host: 'staging.example',
+          port: 3307,
+          user: 'staging-user',
+          password: 'staging-secret',
+          tls: 'preferred' as const,
+        },
+      },
+    }
+    let received: Parameters<CliServices['runRestore']>[0]
+    expect(
+      await executeCli({
+        args: [
+          'restore',
+          '--yes',
+          '--server',
+          'staging',
+          '--database',
+          'app',
+          '--artifact',
+          './artifact',
+          '--destination-database',
+          'restored',
+        ],
+        cwd,
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        services: {
+          loadConfig: async () => multi,
+          runRestore: async (options) => {
+            received = options
+            return { destinationDatabase: 'restored', warnings: 0 }
+          },
+        },
+      }),
+    ).toBe(0)
+    expect(received!.run.server).toMatchObject({
+      id: 'staging',
+      host: 'staging.example',
+      port: 3307,
+      user: 'staging-user',
+    })
+    expect(received!.credentials).toEqual({ user: 'staging-user', password: 'staging-secret' })
+  })
+
+  it('surfaces unknown --server and --database errors', async () => {
+    const runRestore = vi.fn()
+    const unknownServer: string[] = []
+    expect(
+      await executeCli({
+        args: [
+          'restore',
+          '--json',
+          '--yes',
+          '--server',
+          'missing',
+          '--destination-database',
+          'restored',
+          '--artifact',
+          'artifact',
+        ],
+        stdout: (line) => unknownServer.push(line),
+        stderr: vi.fn(),
+        services: { loadConfig: async () => restoreConfig(), runRestore },
+      }),
+    ).toBe(1)
+    expect(JSON.parse(unknownServer.at(-1)!)).toMatchObject({
+      type: 'error',
+      error: { message: expect.stringMatching(/Unknown server "missing"/) },
+    })
+    expect(runRestore).not.toHaveBeenCalled()
+
+    const unknownDatabase: string[] = []
+    expect(
+      await executeCli({
+        args: [
+          'restore',
+          '--json',
+          '--yes',
+          '--database',
+          'missing',
+          '--destination-database',
+          'restored',
+          '--artifact',
+          'artifact',
+        ],
+        stdout: (line) => unknownDatabase.push(line),
+        stderr: vi.fn(),
+        services: { loadConfig: async () => restoreConfig(), runRestore },
+      }),
+    ).toBe(1)
+    expect(JSON.parse(unknownDatabase.at(-1)!)).toMatchObject({
+      type: 'error',
+      error: { message: expect.stringMatching(/Unknown database "missing"/) },
+    })
+    expect(runRestore).not.toHaveBeenCalled()
+  })
+
+  it('does not prompt for server or database when catalogs are single-entry', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-noprompt-'))
+    roots.push(cwd)
+    const text = vi.fn().mockResolvedValueOnce('restored')
+    const runRestore = vi.fn(async () => ({ destinationDatabase: 'restored', warnings: 0 }))
+    expect(
+      await executeCli({
+        args: ['restore', '--yes', '--artifact', './artifact'],
+        cwd,
+        env: {},
+        stdinTTY: true,
+        stdoutTTY: true,
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        prompts: { ...noPrompts, text },
+        services: {
+          loadConfig: async () => restoreConfig(),
+          runRestore,
+        },
+      }),
+    ).toBe(0)
+    expect(text).toHaveBeenCalledOnce()
+    expect(text).toHaveBeenCalledWith('Destination database', expect.any(AbortSignal))
+    expect(runRestore).toHaveBeenCalledOnce()
+  })
+
   it('maps catalog key, policies, discloses the plan, and emits a JSON result for approved automation', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-cli-'))
     roots.push(cwd)

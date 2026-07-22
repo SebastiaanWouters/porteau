@@ -1,8 +1,8 @@
 import { dirname, resolve } from 'node:path'
-import { defaultServer, overlayDefaultServer } from '../core/config.js'
+import { applyConfigOverlay } from '../core/config.js'
 import { resolveRestoreArtifactPath, type RestoreConfirmation } from '../core/restore.js'
-import { asDatabaseId, effectiveUser, resolveRun, type Selection } from '../core/runtime-config.js'
-import { abortError, normalizeList, normalizeRequired, promptOrAbort } from './shared.js'
+import { effectiveUser, resolveRun } from '../core/runtime-config.js'
+import { abortError, normalizeRequired, promptOrAbort, resolveCatalogSelection } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
 function restoreSummary(summary: RestoreConfirmation): string {
@@ -32,6 +32,10 @@ export const restoreCommand = defineCommand({
       description: 'Backup artifact directory (resolved against the config directory)',
     },
     user: { type: 'string', description: 'Destination database user' },
+    server: {
+      type: 'string',
+      description: 'Server catalog key (defaults.server when omitted)',
+    },
     database: {
       type: 'string',
       description: 'Catalog database key for the artifact source (defaults.database when omitted)',
@@ -72,12 +76,26 @@ export const restoreCommand = defineCommand({
       ...(configFile ? { configFile } : {}),
       ...(Object.keys(restoreFlags).length ? { flags: { restore: restoreFlags } } : {}),
     })
-    if (values.user) config = overlayDefaultServer(config, { user: String(values.user) })
     signal.throwIfAborted()
-    const server = defaultServer(config)
-    presentation.registerSecret(server.password)
-    let user = server.user
-    let password = server.password
+
+    const { selection, serverKey } = await resolveCatalogSelection({
+      config,
+      ...(values.server !== undefined ? { serverFlag: String(values.server) } : {}),
+      ...(values.database !== undefined ? { databaseFlag: String(values.database) } : {}),
+      interactive: presentation.interactive,
+      prompts,
+      signal,
+      databaseArity: 'one',
+    })
+
+    const selected = config.servers[serverKey]
+    if (selected === undefined) {
+      const known = Object.keys(config.servers).sort().join(', ')
+      throw new Error(`Unknown server "${serverKey}". Known servers: ${known || '(none)'}`)
+    }
+    presentation.registerSecret(selected.password)
+    let user = values.user !== undefined ? String(values.user) : selected.user
+    let password = selected.password
     let destinationDatabase = values['destination-database']
       ? String(values['destination-database'])
       : undefined
@@ -105,18 +123,12 @@ export const restoreCommand = defineCommand({
     if (!user || password === undefined || !destinationDatabase)
       throw new Error('Restore requires a destination database, database user, and password')
     destinationDatabase = normalizeRequired(destinationDatabase, 'Destination database')
-    config = overlayDefaultServer(config, { user, password })
+    config = applyConfigOverlay(config, {
+      servers: { [serverKey]: { user, password } },
+    })
     signal.throwIfAborted()
-    presentation.registerSecret(defaultServer(config).password)
+    presentation.registerSecret(config.servers[serverKey]?.password)
 
-    const databaseTokens = values.database
-      ? normalizeList(values.database, '--database')
-      : undefined
-    if (databaseTokens !== undefined && databaseTokens.length !== 1)
-      throw new Error('Restore accepts exactly one --database catalog key')
-    const selection: Selection | undefined = databaseTokens
-      ? { databases: [asDatabaseId(databaseTokens[0]!)] }
-      : undefined
     const run = resolveRun(config, selection, { configDirectory })
     const loginUser = effectiveUser(run, run.databases[0])
     if (!loginUser)
