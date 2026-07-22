@@ -1,0 +1,14 @@
+# GitHub Actions BuildKit cache — merged only when GITHUB_ACTIONS=true.
+services:
+  ubuntu-2204:
+    build:
+      cache_from: [{ type: gha, scope: porteau-installer-2204 }]
+      cache_to: [{ type: gha, mode: max, scope: porteau-installer-2204 }]
+  ubuntu-2404:
+    build:
+      cache_from: [{ type: gha, scope: porteau-installer-2404 }]
+      cache_to: [{ type: gha, mode: max, scope: porteau-installer-2404 }]
+  ubuntu-2404-arm64:
+    build:
+      cache_from: [{ type: gha, scope: porteau-installer-2404-arm64 }]
+      cache_to: [{ type: gha, mode: max, scope: porteau-installer-2404-arm64 }]

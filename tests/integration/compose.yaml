@@ -2,6 +2,7 @@ services:
   mysql:
     image: mysql@sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d
     command: --partial-revokes=ON
+    tmpfs: [/var/lib/mysql]
     environment:
       MYSQL_ROOT_PASSWORD: qualification-only
     healthcheck:
@@ -11,9 +12,16 @@ services:
       retries: 40
   qualification:
     build: { context: ../.., dockerfile: tests/integration/Dockerfile }
+    working_dir: /work
+    volumes:
+      - ../..:/work
+      - qualification_node_modules:/work/node_modules
     environment:
       PORTEAU_MYSQL_INTEGRATION: '1'
       MYSQL_HOST: mysql
       MYSQL_PWD: qualification-only
     depends_on:
       mysql: { condition: service_healthy }
+
+volumes:
+  qualification_node_modules:

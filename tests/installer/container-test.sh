@@ -10,7 +10,11 @@ shellcheck install.sh scripts/install.sh.template scripts/verify-external.sh scr
 export TMPDIR="${TMPDIR:-/tmp}"
 mkdir -p "$TMPDIR"
 bats tests/installer/installer.bats
-mode=(--dependencies-only)
-[[ "${PORTEAU_RELEASE_TEST:-0}" == 1 ]] && mode=()
-./install.sh "${mode[@]}" --yes
-./install.sh "${mode[@]}" --yes
+if [[ "${PORTEAU_RELEASE_TEST:-0}" == 1 ]]; then
+  ./install.sh --yes
+  ./install.sh --yes
+  exit
+fi
+# Image build already ran a cold --dependencies-only install; assert the mounted
+# install.sh is an idempotent no-op against that environment.
+./install.sh --dependencies-only --yes

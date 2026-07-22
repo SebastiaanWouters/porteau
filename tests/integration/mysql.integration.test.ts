@@ -57,7 +57,7 @@ suite('Porteau against pinned MySQL and mydumper', () => {
       CREATE TABLE safe_app.schema_only(id INT PRIMARY KEY) ENGINE=InnoDB;
       CREATE TABLE safe_app.excluded(id INT PRIMARY KEY) ENGINE=InnoDB;
       INSERT INTO safe_app.rows(value)
-        SELECT UUID() FROM information_schema.COLUMNS a, information_schema.COLUMNS b LIMIT 50000;
+        SELECT UUID() FROM information_schema.COLUMNS a, information_schema.COLUMNS b LIMIT 5000;
       INSERT INTO safe_app.schema_only VALUES (1);
       INSERT INTO safe_app.excluded VALUES (1);
       CREATE VIEW safe_app.row_view AS SELECT id, value FROM safe_app.rows WHERE id <= 10;

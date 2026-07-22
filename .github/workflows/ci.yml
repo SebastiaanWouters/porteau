@@ -33,3 +33,9 @@ jobs:
       - run: vp install --frozen-lockfile
       - name: Run the local verification suite
         run: vp run verify
+
+  qualify:
+    name: External qualification
+    uses: ./.github/workflows/qualify-external.yml
+    with:
+      compose_prefix: porteau-${{ github.run_id }}-${{ github.run_attempt }}
