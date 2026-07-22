@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vite-plus/test'
 import {
   DOCUMENTATION_REPOSITORY,
@@ -8,6 +10,8 @@ import {
   readmePrimaryInstallMarker,
   versionedInstallUrl,
 } from '../scripts/public-install-surface.js'
+
+const readmePath = fileURLToPath(new URL('../README.md', import.meta.url))
 
 function installationFixture(primaryUrl: string, extra = ''): string {
   return `# Porteau
@@ -64,6 +68,11 @@ describe('public install surface', () => {
     expect(() =>
       assertReadmeDocumentsPublicInstallUrl(installationFixture(readmePrimaryInstallMarker())),
     ).not.toThrow()
+  })
+
+  it('accepts the committed README Installation section', async () => {
+    const readme = await readFile(readmePath, 'utf8')
+    expect(() => assertReadmeDocumentsPublicInstallUrl(readme)).not.toThrow()
   })
 
   it('accepts a case-differing documentation repository in the primary URL', () => {
