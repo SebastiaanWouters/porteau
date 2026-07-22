@@ -2,7 +2,18 @@ ARG UBUNTU_IMAGE=ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2ce
 FROM ${UBUNTU_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TMPDIR=/tmp
-RUN apt-get update && apt-get install -y --no-install-recommends bats shellcheck ca-certificates curl gnupg sudo && rm -rf /var/lib/apt/lists/*
+# Archive mirrors flake under GHA; retry before failing the image build.
+RUN set -eux; \
+    for attempt in 1 2 3 4 5; do \
+      if apt-get update -o Acquire::Retries=5 \
+        && apt-get install -y --no-install-recommends bats shellcheck ca-certificates curl gnupg sudo; then \
+        rm -rf /var/lib/apt/lists/*; \
+        exit 0; \
+      fi; \
+      echo "apt-get failed (attempt ${attempt}); retrying..."; \
+      sleep $((attempt * 15)); \
+    done; \
+    exit 1
 RUN useradd --create-home --shell /bin/bash porteau-test \
     && printf 'porteau-test ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/porteau-test \
     && chmod 0440 /etc/sudoers.d/porteau-test

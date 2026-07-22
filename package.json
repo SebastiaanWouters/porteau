@@ -23,6 +23,7 @@
     "node": ">=22.18.0"
   },
   "scripts": {
+    "bump": "node scripts/bump-version.mjs",
     "generate:install": "tsx scripts/generate-install-script.ts",
     "package:smoke": "node scripts/package-smoke.mjs",
     "porteau": "vp pack && node dist/cli.mjs",
