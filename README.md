@@ -134,7 +134,7 @@ vp run package:dry-run  # package construction only; does not publish
 1. Create the GitHub Environment `npm-release` (no secrets required).
 2. On [npmjs.com](https://www.npmjs.com/), create the `porteau` package ownership and add a Trusted Publisher for this repository, workflow `release.yml`, and environment `npm-release`.
 3. Commit the release surface on `main` (`LICENSE`, workflows, `0.1.0-alpha.0`, regenerated `install.sh`, docs).
-4. Wait for CI to go green on that commit.
+4. Wait for CI to go green on that commit. The release tag validator enforces this mechanically; waiting first avoids a failed tag push.
 5. Tag and push: `git tag v0.1.0-alpha.0 && git push origin v0.1.0-alpha.0`.
 6. Watch the Release alpha workflow publish `next`, create the GitHub prerelease `install.sh` asset, and smoke the public curl URL.
 7. Only after that workflow is green, treat the README install commands as live.
