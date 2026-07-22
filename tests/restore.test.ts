@@ -32,7 +32,13 @@ async function workspace() {
 function config(): PorteauConfig {
   return {
     ...defaultConfig,
-    connection: { ...defaultConfig.connection, user: 'restore', password: 'secret' },
+    servers: {
+      local: {
+        ...defaultConfig.servers.local,
+        user: 'restore',
+        password: 'secret',
+      },
+    },
   } as PorteauConfig
 }
 

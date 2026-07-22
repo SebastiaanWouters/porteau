@@ -1,5 +1,5 @@
 import { dirname, resolve } from 'node:path'
-import { applyConfigOverlay } from '../core/config.js'
+import { defaultServer, overlayDefaultServer, selectedMysqlDatabases } from '../core/config.js'
 import { normalizeList, normalizeRequired, promptOrAbort } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
@@ -29,18 +29,16 @@ export const backupCommand = defineCommand({
       cwd,
       env,
       ...(configFile ? { configFile } : {}),
-      flags: {
-        ...(values.user ? { connection: { user: String(values.user) } } : {}),
-        ...(values.database
-          ? { include: { databases: normalizeList(values.database, '--database') } }
-          : {}),
-      },
     })
+    if (values.user) config = overlayDefaultServer(config, { user: String(values.user) })
     signal.throwIfAborted()
-    presentation.registerSecret(config.connection.password)
-    let user = config.connection.user,
-      password = config.connection.password,
-      databases = config.include.databases
+    const server = defaultServer(config)
+    presentation.registerSecret(server.password)
+    let user = server.user
+    let password = server.password
+    let databases = values.database
+      ? normalizeList(values.database, '--database')
+      : selectedMysqlDatabases(config)
     if (user !== undefined) user = normalizeRequired(user, 'Database user')
     if (presentation.interactive) {
       if (!user)
@@ -56,25 +54,14 @@ export const backupCommand = defineCommand({
         )
         presentation.registerSecret(password)
       }
-      if (!databases.length)
-        databases = normalizeList(
-          await promptOrAbort(
-            (abortSignal) => prompts.text('Included databases (comma-separated)', abortSignal),
-            signal,
-          ),
-          'Included databases',
-        )
     }
     if (!user || password === undefined || !databases.length)
       throw new Error(
         'Backup requires a database user, password, and at least one included database',
       )
-    config = applyConfigOverlay(config, {
-      connection: { user, password },
-      include: { databases },
-    })
+    config = overlayDefaultServer(config, { user, password })
     signal.throwIfAborted()
-    presentation.registerSecret(config.connection.password)
+    presentation.registerSecret(defaultServer(config).password)
     if (config.backup.consistency.mode === 'no-lock') {
       await presentation.disclose(
         'backup',
@@ -86,6 +73,7 @@ export const backupCommand = defineCommand({
     const result = await services.runBackup({
       config,
       configDirectory: configFile ? dirname(configFile) : cwd,
+      databases,
       ...(values.output ? { outputDirectory: String(values.output) } : {}),
       signal,
       environment: env,

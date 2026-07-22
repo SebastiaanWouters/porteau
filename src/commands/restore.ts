@@ -1,5 +1,5 @@
 import { dirname, resolve } from 'node:path'
-import { applyConfigOverlay } from '../core/config.js'
+import { defaultServer, overlayDefaultServer } from '../core/config.js'
 import type { RestoreConfirmation } from '../core/restore.js'
 import { abortError, normalizeRequired, promptOrAbort } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
@@ -68,15 +68,14 @@ export const restoreCommand = defineCommand({
       cwd,
       env,
       ...(configFile ? { configFile } : {}),
-      flags: {
-        ...(values.user ? { connection: { user: String(values.user) } } : {}),
-        ...(Object.keys(restoreFlags).length ? { restore: restoreFlags } : {}),
-      },
+      ...(Object.keys(restoreFlags).length ? { flags: { restore: restoreFlags } } : {}),
     })
+    if (values.user) config = overlayDefaultServer(config, { user: String(values.user) })
     signal.throwIfAborted()
-    presentation.registerSecret(config.connection.password)
-    let user = config.connection.user,
-      password = config.connection.password,
+    const server = defaultServer(config)
+    presentation.registerSecret(server.password)
+    let user = server.user,
+      password = server.password,
       artifact = values.artifact ? String(values.artifact) : undefined,
       sourceDatabase = values['source-database'] ? String(values['source-database']) : undefined,
       destinationDatabase = values['destination-database']
@@ -120,9 +119,9 @@ export const restoreCommand = defineCommand({
     artifact = normalizeRequired(artifact, 'Backup artifact directory')
     sourceDatabase = normalizeRequired(sourceDatabase, 'Source database')
     destinationDatabase = normalizeRequired(destinationDatabase, 'Destination database')
-    config = applyConfigOverlay(config, { connection: { user, password } })
+    config = overlayDefaultServer(config, { user, password })
     signal.throwIfAborted()
-    presentation.registerSecret(config.connection.password)
+    presentation.registerSecret(defaultServer(config).password)
     const result = await services.runRestore({
       config,
       request: {

@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vite-plus/test'
-import { loadConfig } from '../src/core/config.js'
+import { loadConfig, selectedMysqlDatabases } from '../src/core/config.js'
 
 const temporaryDirectories: string[] = []
 
@@ -23,8 +23,12 @@ describe('configuration contract', () => {
   it('loads defaults when no configuration exists', async () => {
     const config = await loadConfig({ cwd: await createWorkspace(), env: {} })
 
-    expect(config.connection.host).toBe('localhost')
+    expect(config.servers.local?.host).toBe('localhost')
+    expect(config.defaults).toEqual({ server: 'local', database: 'app' })
+    expect(config.databases.app?.name).toBe('app')
+    expect(config.artifacts.directory).toBe('./backups')
     expect(config.backup.threads).toBe(4)
+    expect(selectedMysqlDatabases(config)).toEqual(['app'])
   })
 
   it('applies YAML over defaults', async () => {
@@ -35,14 +39,14 @@ describe('configuration contract', () => {
     expect((await loadConfig({ cwd, env: {} })).backup.threads).toBe(2)
   })
 
-  it('applies environment over YAML', async () => {
+  it('applies environment over YAML onto the default server', async () => {
     const cwd = await createWorkspace({
-      'porteau.config.yaml': 'connection:\n  host: from-file\n',
+      'porteau.config.yaml': 'servers:\n  local:\n    host: from-file\n',
     })
 
     const config = await loadConfig({ cwd, env: { PORTEAU_HOST: 'from-env' } })
 
-    expect(config.connection.host).toBe('from-env')
+    expect(config.servers.local?.host).toBe('from-env')
   })
 
   it('applies flags over environment', async () => {
@@ -51,10 +55,10 @@ describe('configuration contract', () => {
     const config = await loadConfig({
       cwd,
       env: { PORTEAU_HOST: 'from-env' },
-      flags: { connection: { host: 'from-flag' } },
+      flags: { servers: { local: { host: 'from-flag' } } },
     })
 
-    expect(config.connection.host).toBe('from-flag')
+    expect(config.servers.local?.host).toBe('from-flag')
   })
 
   it('replaces arrays and honors explicit null overrides', async () => {
@@ -88,10 +92,40 @@ describe('configuration contract', () => {
     )
   })
 
+  it('rejects legacy connection with a migration sentence', async () => {
+    const cwd = await createWorkspace({
+      'porteau.config.yaml': 'connection:\n  host: legacy\n',
+    })
+
+    await expect(loadConfig({ cwd, env: {} })).rejects.toThrow(
+      /connection is unsupported; use servers with defaults\.server/u,
+    )
+  })
+
+  it('rejects legacy include with a migration sentence', async () => {
+    const cwd = await createWorkspace({
+      'porteau.config.yaml': 'include:\n  databases: ["app"]\n',
+    })
+
+    await expect(loadConfig({ cwd, env: {} })).rejects.toThrow(
+      /include is unsupported; use databases with defaults\.database/u,
+    )
+  })
+
+  it('rejects legacy backup.directory with a migration sentence', async () => {
+    const cwd = await createWorkspace({
+      'porteau.config.yaml': 'backup:\n  directory: ./old\n',
+    })
+
+    await expect(loadConfig({ cwd, env: {} })).rejects.toThrow(
+      /backup\.directory is unsupported; use artifacts\.directory/u,
+    )
+  })
+
   it.each(['invalid', ''])('rejects an invalid environment port %j', async (port) => {
     await expect(
       loadConfig({ cwd: await createWorkspace(), env: { PORTEAU_PORT: port } }),
-    ).rejects.toThrow(/Invalid value at connection\.port/)
+    ).rejects.toThrow(/Invalid value at servers\.local\.port/)
   })
 
   it('does not retain invalid configuration values in validation errors', async () => {
@@ -101,13 +135,13 @@ describe('configuration contract', () => {
       await loadConfig({
         cwd: await createWorkspace(),
         env: {},
-        flags: { connection: { password: { secret } } },
+        flags: { servers: { local: { password: { secret } } } },
       })
     } catch (error) {
       failure = error
     }
     expect(failure).toBeInstanceOf(Error)
-    expect(String(failure)).toContain('connection.password')
+    expect(String(failure)).toContain('servers.local.password')
     expect(JSON.stringify(failure)).not.toContain(secret)
     expect(String(failure)).not.toContain(secret)
   })
@@ -115,7 +149,7 @@ describe('configuration contract', () => {
   it('redacts malformed YAML source and unknown strict-object keys', async () => {
     const secret = 'distinctive-config-source-secret-c291'
     const malformed = await createWorkspace({
-      'porteau.config.yaml': `connection:\n  password: ${secret}\n  broken: *missing\n`,
+      'porteau.config.yaml': `servers:\n  local:\n    password: ${secret}\n    broken: *missing\n`,
     })
     await expect(loadConfig({ cwd: malformed, env: {} })).rejects.toThrow(
       /^Unable to load Porteau configuration$/,
@@ -222,9 +256,26 @@ describe('configuration contract', () => {
         loadConfig({
           cwd: await createWorkspace(),
           env: {},
-          flags: { connection: { tls } },
+          flags: { servers: { local: { tls } } },
         }),
       ).rejects.toThrow(/CA-verified TLS/)
     },
   )
+
+  it('rejects defaults that miss registry entries', async () => {
+    await expect(
+      loadConfig({
+        cwd: await createWorkspace(),
+        env: {},
+        flags: { defaults: { server: 'missing' } },
+      }),
+    ).rejects.toThrow(/defaults\.server must name an entry in servers/)
+    await expect(
+      loadConfig({
+        cwd: await createWorkspace(),
+        env: {},
+        flags: { defaults: { database: 'missing' } },
+      }),
+    ).rejects.toThrow(/defaults\.database must name an entry in databases/)
+  })
 })

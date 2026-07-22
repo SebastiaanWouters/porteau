@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, rename, rm, rmdir } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import type { PorteauConfig } from './config.js'
+import { defaultServer, selectedMysqlDatabases, type PorteauConfig } from './config.js'
 import { createCredentialsDefaultsFile } from './credentials.js'
 import type { ConnectionFactory } from './database.js'
 import type { EngineEvent } from './events.js'
@@ -24,6 +24,8 @@ export interface RunBackupOptions {
   readonly config: PorteauConfig
   readonly configDirectory?: string
   readonly outputDirectory?: string
+  /** Catalog keys or MySQL names; defaults to `defaults.database` when omitted. */
+  readonly databases?: readonly string[]
   readonly signal?: AbortSignal
   readonly onEvent?: (event: EngineEvent) => void
   readonly connectionFactory?: ConnectionFactory
@@ -67,7 +69,7 @@ class AutoConsistencyLifecycle {
 }
 
 function outputPath(config: PorteauConfig, override: string | undefined, cwd: string): string {
-  const configured = override ?? config.backup.directory
+  const configured = override ?? config.artifacts.directory
   const expanded = configured.replaceAll('{{date}}', new Date().toISOString().slice(0, 10))
   return resolve(cwd, expanded)
 }
@@ -80,6 +82,7 @@ function syncThreadLockMode(mode: PorteauConfig['backup']['consistency']['mode']
 
 function backupArguments(
   config: PorteauConfig,
+  mysqlDatabases: readonly string[],
   defaultsFile: string,
   temporaryDirectory: string,
   selectedTables: readonly { database: string; table: string }[],
@@ -88,7 +91,7 @@ function backupArguments(
     `--defaults-file=${defaultsFile}`,
     '--machine-log-json',
     `--outputdir=${temporaryDirectory}`,
-    `--database=${config.include.databases.join(',')}`,
+    `--database=${mysqlDatabases.join(',')}`,
     `--regex=${exactTableRegex(selectedTables)}`,
     `--threads=${config.backup.threads}`,
     `--max-threads-per-table=${MAX_THREADS_PER_TABLE}`,
@@ -113,10 +116,11 @@ function backupArguments(
 
 export async function runBackup(options: RunBackupOptions): Promise<BackupResult> {
   const { config } = options
-  if (!config.connection.user || config.connection.password === undefined)
+  const server = defaultServer(config)
+  const mysqlDatabases = selectedMysqlDatabases(config, options.databases)
+  if (!server.user || server.password === undefined)
     throw new Error('Non-interactive backup requires a database user and password')
-  if (config.include.databases.length === 0)
-    throw new Error('Backup requires at least one included database')
+  if (mysqlDatabases.length === 0) throw new Error('Backup requires at least one included database')
 
   const cwd = options.configDirectory ?? process.cwd()
   const environment = options.environment ?? process.env
@@ -141,10 +145,10 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
   options.signal?.throwIfAborted()
   assertMatchingToolVersions(mydumper, myloader)
 
-  const patterns = config.include.databases.map((database) => `${database}.*`)
+  const patterns = mysqlDatabases.map((database) => `${database}.*`)
   const preflight = await runBackupPreflight({
     config,
-    databases: config.include.databases,
+    databases: mysqlDatabases,
     tablePatterns: patterns,
     includeViews: config.objects.views,
     profile: config.backup.profile,
@@ -165,11 +169,11 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
   )
   const credentials = await createCredentialsDefaultsFile(
     {
-      host: config.connection.host,
-      port: config.connection.port,
-      user: config.connection.user,
-      password: config.connection.password,
-      tls: config.connection.tls,
+      host: server.host,
+      port: server.port,
+      user: server.user,
+      password: server.password,
+      tls: server.tls,
     },
     selected,
   )
@@ -192,7 +196,7 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
   try {
     const outcome = await runMachineTool({
       executable: mydumperPath,
-      args: backupArguments(config, credentials.path, temporaryDirectory, selected),
+      args: backupArguments(config, mysqlDatabases, credentials.path, temporaryDirectory, selected),
       tool: 'mydumper',
       signal: lockController.signal,
       env: childEnvironment,

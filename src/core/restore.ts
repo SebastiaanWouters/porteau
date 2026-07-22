@@ -1,4 +1,4 @@
-import type { PorteauConfig } from './config.js'
+import { defaultServer, type PorteauConfig } from './config.js'
 import { createCredentialsDefaultsFile } from './credentials.js'
 import type { ConnectionFactory } from './database.js'
 import type { EngineEvent } from './events.js'
@@ -95,7 +95,8 @@ async function confirmRestore(
 
 export async function runRestore(options: RunRestoreOptions): Promise<RestoreResult> {
   const { config, request } = options
-  if (!config.connection.user || config.connection.password === undefined)
+  const server = defaultServer(config)
+  if (!server.user || server.password === undefined)
     throw new Error('Non-interactive restore requires a database user and password')
   if (request.sourceDatabase === '' || request.destinationDatabase === '')
     throw new Error('Restore requires explicit source and destination databases')
@@ -133,8 +134,8 @@ export async function runRestore(options: RunRestoreOptions): Promise<RestoreRes
     ...(options.connectionFactory ? { connectionFactory: options.connectionFactory } : {}),
   })
   const approved = await confirmRestore(options, {
-    host: config.connection.host,
-    port: config.connection.port,
+    host: server.host,
+    port: server.port,
     sourceDatabase: request.sourceDatabase,
     destinationDatabase: request.destinationDatabase,
     destinationExists: preflight.destination.exists,
@@ -154,11 +155,11 @@ export async function runRestore(options: RunRestoreOptions): Promise<RestoreRes
   assertMatchingToolVersions(mydumper, myloader)
 
   const credentials = await createCredentialsDefaultsFile({
-    host: config.connection.host,
-    port: config.connection.port,
-    user: config.connection.user,
-    password: config.connection.password,
-    tls: config.connection.tls,
+    host: server.host,
+    port: server.port,
+    user: server.user,
+    password: server.password,
+    tls: server.tls,
   })
   const events: EngineEvent[] = []
   let result: RestoreResult | undefined

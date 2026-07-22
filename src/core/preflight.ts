@@ -1,4 +1,4 @@
-import type { PorteauConfig } from './config.js'
+import { defaultServer, type PorteauConfig } from './config.js'
 import {
   connectionOptions,
   mysqlConnectionFactory,
@@ -212,7 +212,9 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
   const factory = request.connectionFactory ?? mysqlConnectionFactory
   let connection
   try {
-    connection = await factory(connectionOptions(request.config.connection, timeoutMilliseconds))
+    connection = await factory(
+      connectionOptions(defaultServer(request.config), timeoutMilliseconds),
+    )
     const query = (sql: string, values?: readonly unknown[]) =>
       queryWithDeadline(connection!, sql, values, {
         timeoutMilliseconds,
@@ -384,7 +386,9 @@ export async function runRestorePreflight(
   const factory = request.connectionFactory ?? mysqlConnectionFactory
   let connection
   try {
-    connection = await factory(connectionOptions(request.config.connection, timeoutMilliseconds))
+    connection = await factory(
+      connectionOptions(defaultServer(request.config), timeoutMilliseconds),
+    )
     const query = (sql: string, values?: readonly unknown[]) =>
       queryWithDeadline(connection!, sql, values, {
         timeoutMilliseconds,

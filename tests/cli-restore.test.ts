@@ -101,8 +101,9 @@ describe('guarded restore CLI', () => {
     await writeFile(
       configFile,
       [
-        'connection:',
-        '  user: restore',
+        'servers:',
+        '  local:',
+        '    user: restore',
         'restore:',
         '  destinationPolicy: allow-existing',
         '  overwritePolicy: truncate',

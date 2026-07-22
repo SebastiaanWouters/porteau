@@ -39,8 +39,10 @@ describe('init, config, and doctor flows', () => {
     expect(contents).not.toMatch(/password:/u)
     expect((await stat(path)).mode & 0o777).toBe(0o600)
     expect(await loadConfig({ configFile: path, env: {} })).toMatchObject({
-      connection: { host: 'db', user: 'backup' },
-      include: { databases: ['app', 'audit'] },
+      defaults: { server: 'local', database: 'app' },
+      servers: { local: { host: 'db', user: 'backup' } },
+      databases: { app: { name: 'app' }, audit: { name: 'audit' } },
+      artifacts: { directory: './backups' },
     })
 
     await writeFile(path, 'original')

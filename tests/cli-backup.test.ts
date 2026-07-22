@@ -47,13 +47,13 @@ describe('guided backup', () => {
     const loads: unknown[] = []
     const runBackup = vi.fn(async () => ({ outputDirectory: '/backup', warnings: 0 }))
     const prompts: PromptAdapter = {
-      text: vi.fn().mockResolvedValueOnce(' backup_user ').mockResolvedValueOnce(' app, audit '),
+      text: vi.fn().mockResolvedValueOnce(' backup_user '),
       password: vi.fn(async () => 'prompt-secret'),
       confirm: vi.fn(),
     }
     expect(
       await executeCli({
-        args: ['backup'],
+        args: ['backup', '--database', ' app, audit '],
         stdout: vi.fn(),
         stderr: vi.fn(),
         env: {},
@@ -70,16 +70,18 @@ describe('guided backup', () => {
       }),
     ).toBe(0)
     expect(loads).toHaveLength(1)
-    expect(loads[0]).toMatchObject({ flags: {} })
+    expect(loads[0]).not.toHaveProperty('flags')
     expect(runBackup).toHaveBeenCalledOnce()
     expect(runBackup).toHaveBeenCalledWith(
       expect.objectContaining({
+        databases: ['app', 'audit'],
         config: expect.objectContaining({
-          connection: expect.objectContaining({
-            user: 'backup_user',
-            password: 'prompt-secret',
+          servers: expect.objectContaining({
+            local: expect.objectContaining({
+              user: 'backup_user',
+              password: 'prompt-secret',
+            }),
           }),
-          include: { databases: ['app', 'audit'] },
         }),
       }),
     )

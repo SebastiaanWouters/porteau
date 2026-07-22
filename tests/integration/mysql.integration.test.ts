@@ -19,17 +19,20 @@ const disposableTls = { rejectUnauthorized: false }
 function config(database: string, output: string): PorteauConfig {
   return {
     ...defaultConfig,
-    connection: {
-      ...defaultConfig.connection,
-      host,
-      user: 'root',
-      password,
-      tls: 'required',
+    artifacts: { directory: output },
+    defaults: { server: 'local', database },
+    servers: {
+      local: {
+        host,
+        port: 3306,
+        user: 'root',
+        password,
+        tls: 'required',
+      },
     },
-    include: { databases: [database] },
+    databases: { [database]: { name: database } },
     backup: {
       ...defaultConfig.backup,
-      directory: output,
       compression: 'none',
       throttle: { ...defaultConfig.backup.throttle, enabled: false },
     },
@@ -198,10 +201,12 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     const backupConfig = config('safe_app', output)
     const noLockConfig: PorteauConfig = {
       ...backupConfig,
-      connection: {
-        ...backupConfig.connection,
-        user: 'no_lock_backup',
-        password: 'no-lock-only',
+      servers: {
+        local: {
+          ...backupConfig.servers.local!,
+          user: 'no_lock_backup',
+          password: 'no-lock-only',
+        },
       },
       backup: {
         ...backupConfig.backup,
@@ -226,10 +231,12 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     const backupConfig = config('safe_app', output)
     const noLockConfig: PorteauConfig = {
       ...backupConfig,
-      connection: {
-        ...backupConfig.connection,
-        user: 'best_effort_backup',
-        password: 'best-effort-only',
+      servers: {
+        local: {
+          ...backupConfig.servers.local!,
+          user: 'best_effort_backup',
+          password: 'best-effort-only',
+        },
       },
       backup: {
         ...backupConfig.backup,
@@ -255,12 +262,15 @@ suite('Porteau against pinned MySQL and mydumper', () => {
   })
 
   it('subtracts real MySQL partial revokes from backup and restore visibility', async () => {
+    const base = config('safe_app', join(root, 'partial-revoke'))
     const partialConfig = {
-      ...config('safe_app', join(root, 'partial-revoke')),
-      connection: {
-        ...config('safe_app', root).connection,
-        user: 'partially_revoked',
-        password: 'partial-only',
+      ...base,
+      servers: {
+        local: {
+          ...base.servers.local!,
+          user: 'partially_revoked',
+          password: 'partial-only',
+        },
       },
     }
     await expect(

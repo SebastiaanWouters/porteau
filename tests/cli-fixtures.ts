@@ -17,14 +17,22 @@ export function config(
     databases?: string[]
   } = {},
 ): PorteauConfig {
+  const names = options.databases ?? ['app']
+  const databases = Object.fromEntries(names.map((name) => [name, { name }]))
   return {
     ...structuredClone(defaultConfig),
-    connection: {
-      ...structuredClone(defaultConfig.connection),
-      ...(options.user === undefined ? {} : { user: options.user }),
-      ...(options.password === undefined ? {} : { password: options.password }),
+    defaults: {
+      server: 'local',
+      database: names[0]!,
     },
-    include: { databases: options.databases ?? [] },
+    servers: {
+      local: {
+        ...structuredClone(defaultConfig.servers.local),
+        ...(options.user === undefined ? {} : { user: options.user }),
+        ...(options.password === undefined ? {} : { password: options.password }),
+      },
+    },
+    databases,
   }
 }
 

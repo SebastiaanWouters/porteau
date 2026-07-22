@@ -44,6 +44,30 @@ function connection(): QueryConnection {
   }
 }
 
+function backupConfig(
+  artifactsDirectory: string,
+  overrides: Partial<PorteauConfig> = {},
+): PorteauConfig {
+  return {
+    ...defaultConfig,
+    ...overrides,
+    artifacts: { directory: artifactsDirectory },
+    servers: {
+      local: {
+        ...defaultConfig.servers.local,
+        user: 'backup',
+        password: 'secret',
+        ...overrides.servers?.local,
+      },
+    },
+    backup: {
+      ...defaultConfig.backup,
+      compression: 'none',
+      ...overrides.backup,
+    },
+  } as PorteauConfig
+}
+
 describe('safe backup service', () => {
   it('requires tool, preflight, event, process and artifact agreement before atomic finalization', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'porteau-backup-'))
@@ -51,12 +75,7 @@ describe('safe backup service', () => {
     await chmod(fixture, 0o755)
     await symlink(fixture, join(cwd, 'mydumper'))
     await symlink(fixture, join(cwd, 'myloader'))
-    const config = {
-      ...defaultConfig,
-      connection: { ...defaultConfig.connection, user: 'backup', password: 'secret' },
-      include: { databases: ['app'] },
-      backup: { ...defaultConfig.backup, directory: './final', compression: 'none' },
-    } as PorteauConfig
+    const config = backupConfig('./final')
 
     await expect(
       runBackup({
@@ -82,16 +101,7 @@ describe('safe backup service', () => {
     directories.push(cwd)
     await symlink(fixture, join(cwd, 'mydumper'))
     await symlink(fixture, join(cwd, 'myloader'))
-    const config = {
-      ...defaultConfig,
-      connection: { ...defaultConfig.connection, user: 'backup', password: 'secret' },
-      include: { databases: ['app'] },
-      backup: {
-        ...defaultConfig.backup,
-        directory: './never-finalized',
-        compression: 'none',
-      },
-    } as PorteauConfig
+    const config = backupConfig('./never-finalized')
 
     await expect(
       runBackup({
@@ -113,13 +123,9 @@ describe('safe backup service', () => {
     await symlink(fixture, join(cwd, 'mydumper'))
     await symlink(fixture, join(cwd, 'myloader'))
     const invocation = join(cwd, 'invocation.json')
-    const config = {
-      ...defaultConfig,
-      connection: { ...defaultConfig.connection, user: 'backup', password: 'secret' },
-      include: { databases: ['app'] },
+    const config = backupConfig('./no-lock-final', {
       backup: {
         ...defaultConfig.backup,
-        directory: './no-lock-final',
         compression: 'none',
         consistency: {
           ...defaultConfig.backup.consistency,
@@ -127,7 +133,7 @@ describe('safe backup service', () => {
           protectDdl: false,
         },
       },
-    } as PorteauConfig
+    })
     const grants = [
       {
         grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO backup',
@@ -170,12 +176,7 @@ describe('safe backup service', () => {
     directories.push(cwd)
     await symlink(fixture, join(cwd, 'mydumper'))
     await symlink(fixture, join(cwd, 'myloader'))
-    const config = {
-      ...defaultConfig,
-      connection: { ...defaultConfig.connection, user: 'backup', password: 'secret' },
-      include: { databases: ['app'] },
-      backup: { ...defaultConfig.backup, directory: './rejected', compression: 'none' },
-    } as PorteauConfig
+    const config = backupConfig('./rejected')
     await expect(
       runBackup({
         config,
