@@ -1,4 +1,5 @@
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
+import type { PorteauConfig, ServerConfig } from './config.js'
 
 declare const serverIdBrand: unique symbol
 declare const databaseIdBrand: unique symbol
@@ -99,10 +100,15 @@ export interface ConnectionCredentials {
   readonly password: string
 }
 
-/** Phase-4 selection stub; optional fields only until resolve wires catalogs. */
+/** Optional runtime selection; omitted fields fall back to config.defaults. */
 export interface Selection {
   readonly server?: ServerId
   readonly databases?: readonly DatabaseId[]
+}
+
+/** Absolute directory of the loaded config file (or cwd); artifacts paths resolve against it. */
+export interface ResolveContext {
+  readonly configDirectory: string
 }
 
 export interface ResolvedServerInput {
@@ -174,7 +180,7 @@ export function createResolvedArtifacts(directory: string): ResolvedArtifacts {
 
 /**
  * Build a ResolvedRun. Rejects empty databases and non-absolute artifacts paths.
- * Does not load YAML, apply defaults, or resolve catalog names — that is phase 4.
+ * Does not load YAML or apply catalog defaults — use resolveRun for that.
  */
 export function createResolvedRun(input: ResolvedRunInput): ResolvedRun {
   const [first, ...rest] = input.databases
@@ -195,6 +201,75 @@ export function createResolvedRun(input: ResolvedRunInput): ResolvedRun {
     objects: input.objects,
     tools: input.tools,
   }
+}
+
+/**
+ * Apply defaults and catalog lookup. The only place selection defaulting lives.
+ * Password stays on the authored server entry; ResolvedServer never carries it.
+ */
+export function resolveRun(
+  config: PorteauConfig,
+  selection: Selection | undefined,
+  context: ResolveContext,
+): ResolvedRun {
+  const serverKey = selection?.server ?? config.defaults.server
+  const serverEntry = config.servers[serverKey]
+  if (serverEntry === undefined) {
+    throw unknownCatalogKeyError('server', serverKey, Object.keys(config.servers))
+  }
+
+  const databaseKeys =
+    selection?.databases !== undefined && selection.databases.length > 0
+      ? selection.databases
+      : [config.defaults.database]
+
+  const databases = databaseKeys.map((databaseKey) => {
+    const entry = config.databases[databaseKey]
+    if (entry === undefined) {
+      throw unknownCatalogKeyError('database', databaseKey, Object.keys(config.databases))
+    }
+    return {
+      id: databaseKey,
+      name: entry.name,
+      ...(entry.user !== undefined ? { user: entry.user } : {}),
+    }
+  })
+
+  return createResolvedRun({
+    server: {
+      id: serverKey,
+      host: serverEntry.host,
+      port: serverEntry.port,
+      ...(serverEntry.user !== undefined ? { user: serverEntry.user } : {}),
+      tls: asResolvedTlsMode(serverEntry.tls),
+    },
+    databases,
+    artifactsDirectory: resolve(context.configDirectory, config.artifacts.directory),
+    backup: config.backup,
+    restore: config.restore,
+    exclude: config.exclude,
+    objects: config.objects,
+    tools: {
+      ...(config.tools.mydumper !== undefined ? { mydumper: config.tools.mydumper } : {}),
+      ...(config.tools.myloader !== undefined ? { myloader: config.tools.myloader } : {}),
+    },
+  })
+}
+
+function asResolvedTlsMode(tls: ServerConfig['tls']): ResolvedTlsMode {
+  if (tls === 'disabled' || tls === 'preferred' || tls === 'required') return tls
+  throw new Error(
+    `Unsupported TLS mode for resolve: ${tls}. CA-verified modes require certificate configuration.`,
+  )
+}
+
+function unknownCatalogKeyError(
+  kind: 'server' | 'database',
+  key: string,
+  known: readonly string[],
+): Error {
+  const listed = [...known].sort().join(', ')
+  return new Error(`Unknown ${kind} "${key}". Known ${kind}s: ${listed || '(none)'}`)
 }
 
 /** MySQL database names in selection order (mydumper --database=a,b). */
