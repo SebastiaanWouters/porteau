@@ -184,6 +184,21 @@ export function overlayDefaultServer(
   })
 }
 
+/** Overlay PORTEAU_HOST/PORT/USER/PASSWORD onto a named server (selected at runtime). */
+export function overlayServerFromEnvironment(
+  config: PorteauConfig,
+  serverKey: string,
+  env: NodeJS.ProcessEnv,
+): PorteauConfig {
+  const fields = connectionFieldsFromEnvironment(env)
+  if (Object.keys(fields).length === 0) return config
+  if (config.servers[serverKey] === undefined) {
+    const known = Object.keys(config.servers).sort().join(', ')
+    throw new Error(`Unknown server "${serverKey}". Known servers: ${known || '(none)'}`)
+  }
+  return applyConfigOverlay(config, { servers: { [serverKey]: fields } })
+}
+
 function connectionFieldsFromEnvironment(env: NodeJS.ProcessEnv): Record<string, unknown> {
   const fields: Record<string, unknown> = {}
   if (env.PORTEAU_HOST !== undefined) fields.host = env.PORTEAU_HOST

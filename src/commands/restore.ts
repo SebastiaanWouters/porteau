@@ -1,5 +1,5 @@
 import { dirname, resolve } from 'node:path'
-import { applyConfigOverlay } from '../core/config.js'
+import { applyConfigOverlay, overlayServerFromEnvironment } from '../core/config.js'
 import { resolveRestoreArtifactPath, type RestoreConfirmation } from '../core/restore.js'
 import { effectiveUser, resolveRun } from '../core/runtime-config.js'
 import { abortError, normalizeRequired, promptOrAbort, resolveCatalogSelection } from './shared.js'
@@ -88,6 +88,7 @@ export const restoreCommand = defineCommand({
       databaseArity: 'one',
     })
 
+    config = overlayServerFromEnvironment(config, serverKey, env)
     const selected = config.servers[serverKey]
     if (selected === undefined) {
       const known = Object.keys(config.servers).sort().join(', ')

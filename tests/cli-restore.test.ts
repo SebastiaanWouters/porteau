@@ -111,6 +111,62 @@ describe('guarded restore CLI', () => {
     expect(received!.credentials).toEqual({ user: 'staging-user', password: 'staging-secret' })
   })
 
+  it('applies PORTEAU_PASSWORD to the selected --server, not only defaults.server', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-env-server-'))
+    roots.push(cwd)
+    const multi = {
+      ...restoreConfig(),
+      servers: {
+        local: {
+          host: '127.0.0.1',
+          port: 3306,
+          user: 'local-user',
+          password: 'local-secret',
+          tls: 'preferred' as const,
+        },
+        staging: {
+          host: 'staging.example',
+          port: 3307,
+          user: 'staging-user',
+          tls: 'preferred' as const,
+        },
+      },
+    }
+    let received: Parameters<CliServices['runRestore']>[0]
+    expect(
+      await executeCli({
+        args: [
+          'restore',
+          '--yes',
+          '--server',
+          'staging',
+          '--database',
+          'app',
+          '--artifact',
+          './artifact',
+          '--destination-database',
+          'restored',
+        ],
+        cwd,
+        env: { PORTEAU_PASSWORD: 'env-staging-secret' },
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        services: {
+          loadConfig: async () => multi,
+          runRestore: async (options) => {
+            received = options
+            return { destinationDatabase: 'restored', warnings: 0 }
+          },
+        },
+      }),
+    ).toBe(0)
+    expect(received!.run.server.id).toBe('staging')
+    expect(received!.credentials).toEqual({
+      user: 'staging-user',
+      password: 'env-staging-secret',
+    })
+  })
+
   it('surfaces unknown --server and --database errors', async () => {
     const runRestore = vi.fn()
     const unknownServer: string[] = []

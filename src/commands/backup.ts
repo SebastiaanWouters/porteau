@@ -1,5 +1,5 @@
 import { dirname, resolve } from 'node:path'
-import { applyConfigOverlay } from '../core/config.js'
+import { applyConfigOverlay, overlayServerFromEnvironment } from '../core/config.js'
 import { effectiveUser, resolveRun } from '../core/runtime-config.js'
 import { normalizeRequired, promptOrAbort, resolveCatalogSelection } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
@@ -51,6 +51,7 @@ export const backupCommand = defineCommand({
       databaseArity: 'many',
     })
 
+    config = overlayServerFromEnvironment(config, serverKey, env)
     const selected = config.servers[serverKey]
     if (selected === undefined) {
       const known = Object.keys(config.servers).sort().join(', ')
