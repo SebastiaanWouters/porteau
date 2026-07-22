@@ -1,0 +1,21 @@
+name: Qualify
+
+# Slow Docker/MySQL/installer suite. Not part of default CI (<5m).
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: porteau-qualify
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    name: External qualification
+    uses: ./.github/workflows/qualify-external.yml
+    with:
+      compose_prefix: porteau-${{ github.run_id }}-${{ github.run_attempt }}

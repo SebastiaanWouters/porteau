@@ -10,14 +10,13 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # Keep main green runs from being cancelled mid-flight (installer jobs are long).
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
   checks:
     name: Node ${{ matrix.node }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -34,9 +33,3 @@ jobs:
       - run: vp install --frozen-lockfile
       - name: Run the local verification suite
         run: vp run verify
-
-  qualify:
-    name: External qualification
-    uses: ./.github/workflows/qualify-external.yml
-    with:
-      compose_prefix: porteau-${{ github.run_id }}-${{ github.run_attempt }}
