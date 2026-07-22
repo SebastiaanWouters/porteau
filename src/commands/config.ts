@@ -13,7 +13,7 @@ function publicConfig(config: PorteauConfig) {
         {
           host: entry.host,
           port: entry.port,
-          user: entry.user,
+          ...(entry.user !== undefined ? { user: entry.user } : {}),
           tls: entry.tls,
           passwordConfigured: entry.password !== undefined,
         },
@@ -44,10 +44,13 @@ export const configCommand = defineCommand({
       env,
       ...(values.config ? { configFile: resolve(cwd, String(values.config)) } : {}),
     })
-    presentation.registerSecret(defaultServer(config).password)
+    for (const entry of Object.values(config.servers)) {
+      presentation.registerSecret(entry.password)
+    }
     signal.throwIfAborted()
-    await presentation.success('config', JSON.stringify(publicConfig(config), null, 2), {
-      config: publicConfig(config),
+    const view = publicConfig(config)
+    await presentation.success('config', JSON.stringify(view, null, 2), {
+      config: view,
     })
     return 0
   },
