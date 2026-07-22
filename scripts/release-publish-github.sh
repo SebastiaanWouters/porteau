@@ -17,7 +17,7 @@ pack_dir="${RUNNER_TEMP:-$(mktemp -d)}/npm-pack"
 mkdir -p "$pack_dir"
 (
   cd "$pack_dir"
-  npm pack "porteau@$version" --silent
+  npm pack "porteau@$version" >/dev/null
 )
 packed="$(find "$pack_dir" -maxdepth 1 -name 'porteau-*.tgz' -type f | head -n 1)"
 [[ -n "$packed" && -f "$packed" ]] || {
@@ -29,6 +29,7 @@ cp "$packed" "$tarball"
 download_dir="${RUNNER_TEMP:-$(mktemp -d)}/release-download"
 mkdir -p "$download_dir"
 
+# Draft releases are not returned by /releases/tags/{tag}; use `gh release view`.
 if state="$(gh release view "$tag" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv' 2>/dev/null)"; then
   read -r draft prerelease <<<"$state"
   [[ "$draft" == true || "$prerelease" == true ]] || {
@@ -47,15 +48,15 @@ ensure_asset() {
   name="$(basename "$path")"
   local asset_id
   asset_id="$(
-    gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
+    gh release view "$tag" --json assets \
       --jq "[.assets[] | select(.name == \"$name\")][0].id // empty"
   )"
   if [[ -z "$asset_id" ]]; then
-    [[ "$draft" == true ]] || {
-      echo "Public prerelease is missing $name." >&2
+    [[ "$draft" == true || "$prerelease" == true ]] || {
+      echo "Public release is missing $name." >&2
       exit 1
     }
-    gh release upload "$tag" "$path"
+    gh release upload "$tag" "$path" --clobber
   fi
 }
 
