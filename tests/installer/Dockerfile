@@ -6,7 +6,7 @@ ENV TMPDIR=/tmp
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update -o Acquire::Retries=3 \
-    && apt-get install -y --no-install-recommends bats shellcheck ca-certificates curl gnupg sudo
+    && apt-get install -y --no-install-recommends bats ca-certificates curl gnupg sudo
 RUN useradd --create-home --shell /bin/bash porteau-test \
     && printf 'porteau-test ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/porteau-test \
     && chmod 0440 /etc/sudoers.d/porteau-test

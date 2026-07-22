@@ -34,12 +34,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/release-validate-tag.mjs
       - run: vp install --frozen-lockfile
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
       - name: Verify generated installer
         run: |
           vp exec tsx scripts/generate-install-script.ts "$RUNNER_TEMP/install.sh"
           cmp install.sh "$RUNNER_TEMP/install.sh"
       - name: Verify and build
-        run: vp check && vp test && vp pack
+        run: bash scripts/check-shell.sh && vp check && vp test && vp pack
       - name: Validate exact package artifact
         run: |
           mkdir -p "$RUNNER_TEMP/release"
@@ -82,11 +84,17 @@ jobs:
   registry-installer:
     name: Published installer
     needs: npm-publish
-    uses: ./.github/workflows/qualify-external.yml
-    with:
-      compose_prefix: porteau-published-${{ github.run_id }}-${{ github.run_attempt }}
-      include_mysql: false
-      release_test: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PORTEAU_COMPOSE_PROJECT: porteau-published-${{ github.run_id }}-${{ github.run_attempt }}
+      PORTEAU_RELEASE_TEST: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - run: bash scripts/verify-external.sh ubuntu-2404
 
   github-release:
     name: Publish GitHub prerelease
@@ -113,7 +121,7 @@ jobs:
     name: Public installer smoke
     needs: github-release
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -122,6 +130,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Verify and run the public release installer
         run: |
           set -Eeuo pipefail

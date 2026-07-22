@@ -29,8 +29,6 @@
     "porteau": "vp pack && node dist/cli.mjs",
     "verify": "bash scripts/check-shell.sh && vp check && vp test && vp pack && vp run package:smoke",
     "verify:external": "bash scripts/verify-external.sh",
-    "verify:mysql": "bash scripts/verify-external.sh mysql",
-    "verify:installers": "bash scripts/verify-external.sh ubuntu-2204 && bash scripts/verify-external.sh ubuntu-2404",
     "package:dry-run": "vp run verify && pnpm publish --dry-run --no-git-checks"
   },
   "bin": {

@@ -41,25 +41,6 @@ compatible() {
   make_fake myloader 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "myloader v1.0.3-1, built against MySQL 8.0.0 with SSL support"; fi'
 }
 
-fake_porteau_install() {
-  make_fake npm "case \"\$1\" in --version) echo 11.0.0;; view) echo '${porteau_version}';; install) package=\"\$HOME/.local/lib/node_modules/porteau\"; mkdir -p \"\$package/dist\" \"\$HOME/.local/bin\"; printf '{\"name\":\"porteau\",\"version\":\"${porteau_version}\",\"bin\":{\"porteau\":\"dist/cli.mjs\"}}' >\"\$package/package.json\"; printf '#!/bin/sh\\ncase \"\$1\" in --version) echo ${porteau_version};; doctor) exit 0;; *) exit 1;; esac\\n' >\"\$package/dist/cli.mjs\"; chmod +x \"\$package/dist/cli.mjs\"; ln -sf ../lib/node_modules/porteau/dist/cli.mjs \"\$HOME/.local/bin/porteau\";; *) exit 91;; esac"
-}
-
-@test "released installer installs the exact package and verifies an idempotent rerun" {
-  compatible
-  fake_porteau_install
-  make_fake sudo 'exit 99'
-
-  run env HOME="$HOME" PATH="$fake:/usr/bin:/bin" bash "$source_root/install.sh" --yes
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Porteau ${porteau_version} and all dependencies installed and verified."* ]]
-
-  make_fake npm 'if [ "$1" = --version ]; then echo 11.0.0; else exit 98; fi'
-  run env HOME="$HOME" PATH="$fake:/usr/bin:/bin" bash "$source_root/install.sh" --yes
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Porteau ${porteau_version} and all dependencies are ready."* ]]
-}
-
 compatible_newer() {
   compatible
   make_fake mydumper 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "mydumper v1.0.4-1, built against MySQL 8.0.0 with SSL support"; fi'

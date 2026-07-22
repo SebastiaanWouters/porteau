@@ -12,7 +12,7 @@ usage() {
 Usage: scripts/verify-external.sh [all|mysql|ubuntu-2204|ubuntu-2404|ubuntu-2404-arm64]
 
 With no argument, runs MySQL and the installer targets native to this machine in parallel.
-Run an explicit target to reproduce its corresponding CI qualification job.
+Run an explicit target for optional local qualification or release installer smoke.
 EOF
 }
 
@@ -51,11 +51,7 @@ installer_compose() {
 }
 
 mysql_compose() {
-  local -a files=(-f tests/integration/compose.yaml)
-  if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
-    files+=(-f tests/integration/compose.cache.yaml)
-  fi
-  printf '%s\n' "${files[@]}"
+  printf '%s\n' -f tests/integration/compose.yaml
 }
 
 mysql() {

@@ -1,6 +1,0 @@
-# GitHub Actions BuildKit cache — merged only when GITHUB_ACTIONS=true.
-services:
-  qualification:
-    build:
-      cache_from: ['type=gha,scope=porteau-mysql-qualification']
-      cache_to: ['type=gha,mode=max,scope=porteau-mysql-qualification']
