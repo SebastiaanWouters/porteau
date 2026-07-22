@@ -1,6 +1,6 @@
 {
   "name": "porteau",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Safe, observable MySQL logical backups and restores with mydumper and myloader",
   "keywords": [
     "mysql",
