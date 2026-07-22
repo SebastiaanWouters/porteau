@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 candidate_dir="${1:?Usage: release-publish-github.sh <candidate-dir>}"
 tag="${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
+version="${tag#v}"
 install_script="$candidate_dir/install.sh"
 tarball="$candidate_dir/porteau.tgz"
 
@@ -10,10 +11,20 @@ tarball="$candidate_dir/porteau.tgz"
   echo "Missing installer: $install_script" >&2
   exit 2
 }
-[[ -f "$tarball" ]] || {
-  echo "Missing package tarball: $tarball" >&2
+
+# Prefer the exact registry tarball so the GitHub asset matches npm.
+pack_dir="${RUNNER_TEMP:-$(mktemp -d)}/npm-pack"
+mkdir -p "$pack_dir"
+(
+  cd "$pack_dir"
+  npm pack "porteau@$version" --silent
+)
+packed="$(find "$pack_dir" -maxdepth 1 -name 'porteau-*.tgz' -type f | head -n 1)"
+[[ -n "$packed" && -f "$packed" ]] || {
+  echo "Failed to download porteau@$version from the registry" >&2
   exit 2
 }
+cp "$packed" "$tarball"
 
 download_dir="${RUNNER_TEMP:-$(mktemp -d)}/release-download"
 mkdir -p "$download_dir"

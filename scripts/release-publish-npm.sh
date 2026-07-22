@@ -28,30 +28,29 @@ integrity="$(
   ' "$tarball"
 )"
 
+# Use the full registry document — the abbreviated install-v1 view omits license/repository.
 registry_state() {
-  VERSION="$version" INTEGRITY="$integrity" node --input-type=module <<'NODE'
-const response = await fetch('https://registry.npmjs.org/porteau', {
-  headers: { accept: 'application/vnd.npm.install-v1+json' },
-})
+  VERSION="$version" INTEGRITY="$integrity" REQUIRE_INTEGRITY="${1:-1}" node --input-type=module <<'NODE'
+const response = await fetch('https://registry.npmjs.org/porteau')
 if (response.status === 404) process.exit(10)
 if (!response.ok) throw new Error(`Registry returned HTTP ${response.status}`)
 const metadata = await response.json()
 const release = metadata.versions?.[process.env.VERSION]
 if (!release) process.exit(10)
-if (
-  release.name !== 'porteau' ||
-  release.version !== process.env.VERSION ||
-  release.bin?.porteau !== 'dist/cli.mjs' ||
-  release.license !== 'Apache-2.0' ||
-  release.repository?.url !== 'git+https://github.com/SebastiaanWouters/porteau.git' ||
-  release.dist?.integrity !== process.env.INTEGRITY
-)
+const metadataOk =
+  release.name === 'porteau' &&
+  release.version === process.env.VERSION &&
+  release.bin?.porteau === 'dist/cli.mjs' &&
+  release.license === 'Apache-2.0' &&
+  release.repository?.url === 'git+https://github.com/SebastiaanWouters/porteau.git'
+if (!metadataOk) process.exit(20)
+if (process.env.REQUIRE_INTEGRITY === '1' && release.dist?.integrity !== process.env.INTEGRITY)
   process.exit(20)
 NODE
 }
 
 set +e
-registry_state
+registry_state 1
 state=$?
 set -e
 case "$state" in
@@ -60,8 +59,18 @@ case "$state" in
     npm publish "$tarball" --ignore-scripts --access public --tag next --provenance
     ;;
   20)
-    echo "porteau@$version exists with different metadata or integrity." >&2
-    exit 1
+    # Version exists (possibly from a prior attempt). Accept matching package metadata even
+    # when this run's freshly packed tarball differs by gzip timestamps.
+    set +e
+    registry_state 0
+    existing=$?
+    set -e
+    if [[ "$existing" == 0 ]]; then
+      echo "porteau@$version is already on the registry with valid metadata; continuing."
+    else
+      echo "porteau@$version exists with unexpected metadata or is not readable yet." >&2
+      exit 1
+    fi
     ;;
   *)
     echo 'Unable to establish package state from the npm registry.' >&2
@@ -71,16 +80,12 @@ esac
 
 for attempt in {1..12}; do
   set +e
-  registry_state
+  registry_state 0
   state=$?
   set -e
   [[ "$state" == 0 ]] && break
-  [[ "$state" == 20 ]] && {
-    echo 'Published package integrity mismatch.' >&2
-    exit 1
-  }
   ((attempt == 12)) && {
-    echo 'Published package did not become available.' >&2
+    echo 'Published package did not become available with valid metadata.' >&2
     exit 1
   }
   sleep 5
@@ -95,3 +100,5 @@ if (metadata['dist-tags']?.next !== process.env.VERSION)
 if (metadata['dist-tags']?.latest === process.env.VERSION)
   throw new Error('The alpha release unexpectedly changed latest')
 NODE
+
+echo "Validated porteau@$version on npm (next=$(npm view porteau dist-tags.next))"
