@@ -38,3 +38,22 @@ fi
 gh release download "$tag" --pattern install.sh --dir "$download_dir" --clobber
 cmp "$install_script" "$download_dir/install.sh"
 [[ "$draft" == true ]] && gh release edit "$tag" --draft=false --prerelease
+
+channel=alpha
+channel_dir="$download_dir/channel"
+mkdir -p "$channel_dir"
+
+if ! gh release view "$channel" >/dev/null 2>&1; then
+  gh release create "$channel" "$install_script" \
+    --prerelease --title alpha --notes "Current alpha installer (floating channel)."
+else
+  channel_prerelease="$(gh release view "$channel" --json isPrerelease --jq .isPrerelease)"
+  [[ "$channel_prerelease" == true ]] || {
+    echo "$channel exists as a full release." >&2
+    exit 1
+  }
+  gh release upload "$channel" "$install_script" --clobber
+fi
+
+gh release download "$channel" --pattern install.sh --dir "$channel_dir" --clobber
+cmp "$install_script" "$channel_dir/install.sh"
