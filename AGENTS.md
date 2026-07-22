@@ -15,7 +15,6 @@ Run `vp check`, `vp test`, and `vp pack` before finishing code changes.
    - run only on this repository (not forks)
    - validate tag ↔ version ↔ `main` ancestry ↔ green CI
    - publish to npm via **trusted publishing OIDC** (no `NPM_TOKEN`), with provenance, `--ignore-scripts`, and dist-tag `next` (never `latest` for alphas)
-   - use GitHub Environment `npm-release` (configure required reviewers on that environment)
    - attach both `install.sh` and `porteau.tgz` to a verified GitHub prerelease, then smoke the public installer URL
 
 ### npm Trusted Publisher (required)
@@ -25,5 +24,5 @@ On https://www.npmjs.com/package/porteau → Access → Trusted Publishers:
 - Provider: GitHub Actions
 - Repository: `SebastiaanWouters/porteau`
 - Workflow filename: `release.yml`
-- Environment: `npm-release` (must match the workflow `environment:`)
+- Environment: leave empty (workflow does not use a GitHub Environment)
 - Allow: `npm publish`
