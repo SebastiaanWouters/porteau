@@ -1,75 +1,12 @@
-import { defineCommand } from 'citty'
-import { dirname, resolve } from 'node:path'
-import { loadConfig } from '../core/config.js'
-import {
-  runDiagnostics,
-  type DiagnosticsOptions,
-  type DiagnosticsResult,
-  type DiagnosticStatus,
-} from '../setup/diagnostics.js'
+import { resolve } from 'node:path'
+import { defineCommand, type CommandContext } from './types.js'
+import { formatDiagnostics } from './doctor-format.js'
 
-export interface DiagnosticCommandOptions {
-  readonly configFile?: string
-  readonly env?: NodeJS.ProcessEnv
-  readonly cwd?: string
-  readonly signal?: AbortSignal
-  readonly diagnostics?: DiagnosticsOptions
-  readonly diagnose?: typeof runDiagnostics
-}
-
-export async function collectDiagnostics(
-  options: DiagnosticCommandOptions = {},
-): Promise<DiagnosticsResult> {
-  const cwd = options.cwd ?? process.cwd()
-  const configFile = options.configFile ? resolve(cwd, options.configFile) : undefined
-  const config = await loadConfig({
-    ...(configFile ? { configFile } : {}),
-    cwd,
-    ...(options.env ? { env: options.env } : {}),
-  })
-  const configPaths = {
-    ...(config.tools.mydumper ? { mydumper: config.tools.mydumper } : {}),
-    ...(config.tools.myloader ? { myloader: config.tools.myloader } : {}),
-  }
-  return (options.diagnose ?? runDiagnostics)({
-    ...options.diagnostics,
-    cwd: configFile ? dirname(configFile) : (options.diagnostics?.cwd ?? cwd),
-    configPaths,
-    ...(options.signal ? { signal: options.signal } : {}),
-  })
-}
-
-function marker(status: DiagnosticStatus): string {
-  return status === 'ok' ? 'ok' : status === 'warning' ? 'warn' : 'error'
-}
-
-export function formatDiagnostics(result: DiagnosticsResult): string[] {
-  const { system, node, tools, toolPair } = result
-  const systemDetails = [system.name, system.codename, system.architecture]
-    .filter(Boolean)
-    .join(', ')
-  const lines = [
-    'Porteau diagnostics (read-only)',
-    `[${marker(system.status)}] System: ${systemDetails}`,
-    `[${marker(node.status)}] Node.js: ${node.version} (minimum ${node.minimumVersion})`,
-  ]
-  for (const name of ['mydumper', 'myloader'] as const) {
-    const tool = tools[name]
-    const details = tool.path
-      ? `${tool.version ?? 'version unavailable'} at ${tool.path} (${tool.source})`
-      : 'not available'
-    lines.push(`[${marker(tool.status)}] ${name}: ${details}`)
-    if (tool.correction) lines.push(`  Fix: ${tool.correction}`)
-  }
-  lines.push(
-    `[${marker(toolPair.status)}] Tool pair: ${toolPair.status === 'ok' ? 'compatible and matching' : 'not ready'}`,
-  )
-  if (system.correction) lines.push(`  System note: ${system.correction}`)
-  if (node.correction) lines.push(`  Fix: ${node.correction}`)
-  if (toolPair.correction) lines.push(`  Fix: ${toolPair.correction}`)
-  lines.push(result.ok ? 'Diagnostics passed.' : 'Diagnostics found blocking dependency issues.')
-  return lines
-}
+export {
+  collectDiagnostics,
+  formatDiagnostics,
+  type DiagnosticCommandOptions,
+} from './doctor-format.js'
 
 export const doctorCommand = defineCommand({
   meta: {
@@ -82,5 +19,25 @@ export const doctorCommand = defineCommand({
       alias: 'c',
       description: 'Path to a YAML configuration file',
     },
+  },
+  async run(context: CommandContext<'collectDiagnostics'>) {
+    const { values, cwd, env, presentation, services, signal } = context
+    const result = await services.collectDiagnostics({
+      ...(values.config ? { configFile: resolve(cwd, String(values.config)) } : {}),
+      env,
+      cwd,
+      signal,
+      diagnostics: { env, signal },
+    })
+    signal.throwIfAborted()
+    if (!result.ok) {
+      await presentation.reportDiagnostics('doctor', formatDiagnostics(result).join('\n'), result)
+      await presentation.failure('doctor', 'Diagnostics found blocking dependency issues.', 1)
+      return 1
+    }
+    await presentation.success('doctor', formatDiagnostics(result).join('\n'), {
+      diagnostics: result,
+    })
+    return 0
   },
 })

@@ -1,54 +1,34 @@
 #!/usr/bin/env node
 import { defineCommand, renderUsage } from 'citty'
-import { randomUUID } from 'node:crypto'
-import { link, open, rm } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 import packageJson from '../package.json' with { type: 'json' }
-import { backupCommand } from './commands/backup.js'
-import { configCommand } from './commands/config.js'
-import { collectDiagnostics, doctorCommand, formatDiagnostics } from './commands/doctor.js'
-import { initCommand } from './commands/init.js'
-import { restoreCommand } from './commands/restore.js'
+import { collectDiagnostics } from './commands/doctor-format.js'
+import { COMMANDS, type CommandName } from './commands/registry.js'
+import { UsageError } from './commands/shared.js'
+import type { CliServices } from './commands/types.js'
 import { runBackup } from './core/backup.js'
-import { defaultConfig, loadConfig, validateConfig, type PorteauConfig } from './core/config.js'
-import { runRestore, type RestoreConfirmation } from './core/restore.js'
+import { loadConfig } from './core/config.js'
+import { runRestore } from './core/restore.js'
 import { OutputError, Presentation } from './presentation/context.js'
 import { clackPrompts, type PromptAdapter } from './presentation/prompts.js'
 import type { ProgressFactory } from './presentation/progress.js'
 
+export type { CliServices } from './commands/types.js'
+
 export const mainCommand = defineCommand({
   meta: { name: 'porteau', version: packageJson.version, description: packageJson.description },
-  subCommands: {
-    backup: backupCommand,
-    restore: restoreCommand,
-    init: initCommand,
-    doctor: doctorCommand,
-    config: configCommand,
-  },
+  // Citty only formats help until unit 5; command modules already own run handlers.
+  subCommands: COMMANDS as never,
 })
-const commands = {
-  backup: backupCommand,
-  restore: restoreCommand,
-  init: initCommand,
-  doctor: doctorCommand,
-  config: configCommand,
-} as const
-async function usage(name?: string): Promise<string> {
+
+async function usage(name?: CommandName): Promise<string> {
   const parent = { meta: { name: 'porteau' } }
-  const rendered = await (name === 'backup'
-    ? renderUsage(backupCommand, parent)
-    : name === 'restore'
-      ? renderUsage(restoreCommand, parent)
-      : name === 'init'
-        ? renderUsage(initCommand, parent)
-        : name === 'doctor'
-          ? renderUsage(doctorCommand, parent)
-          : name === 'config'
-            ? renderUsage(configCommand, parent)
-            : renderUsage(mainCommand))
+  const rendered = name
+    ? await renderUsage(COMMANDS[name] as never, parent)
+    : await renderUsage(mainCommand)
   return `${rendered}\nGLOBAL OPTIONS\n  --json  JSONL output\n  --quiet  Essential output only\n  --verbose  Detailed output\n  --no-interactive  Never prompt\n  --yes  Approve restore mutation`
 }
+
 export interface CliExecutionOptions {
   args?: string[]
   stdout?: (line: string) => unknown
@@ -62,31 +42,29 @@ export interface CliExecutionOptions {
   progress?: ProgressFactory
   services?: Partial<CliServices>
 }
-export interface CliServices {
-  loadConfig: typeof loadConfig
-  runBackup: typeof runBackup
-  runRestore: typeof runRestore
-  collectDiagnostics: typeof collectDiagnostics
-}
+
 const defaultServices: CliServices = {
   loadConfig,
   runBackup,
   runRestore,
   collectDiagnostics,
 }
-class UsageError extends Error {}
+
 const globalBoolean = new Set(['--json', '--quiet', '--verbose', '--no-interactive', '--yes'])
+
 interface ParsedCli {
   readonly flags: PresentationFlags
-  readonly command?: keyof typeof commands
+  readonly command?: CommandName
   readonly values: Record<string, string | boolean>
   readonly help: boolean
   readonly version: boolean
 }
+
 type PresentationFlags = ConstructorParameters<typeof Presentation>[0]
+
 interface ParseContext {
   readonly flags: PresentationFlags
-  command?: keyof typeof commands
+  command?: CommandName
 }
 
 function setGlobal(flags: PresentationFlags, value: string): boolean {
@@ -99,13 +77,10 @@ function setGlobal(flags: PresentationFlags, value: string): boolean {
   return true
 }
 
-function optionDefinitions(command: keyof typeof commands) {
-  const definitions = commands[command].args as Record<
-    string,
-    { type?: string; alias?: string | string[] }
-  >
+function optionDefinitions(command: CommandName) {
+  const definitions = COMMANDS[command].args
   const options = new Map<string, { name: string; boolean: boolean }>()
-  for (const [name, definition] of Object.entries(definitions ?? {})) {
+  for (const [name, definition] of Object.entries(definitions)) {
     const option = { name, boolean: definition.type === 'boolean' }
     options.set(`--${name}`, option)
     for (const alias of Array.isArray(definition.alias)
@@ -119,7 +94,7 @@ function optionDefinitions(command: keyof typeof commands) {
 }
 
 function parseCommandArguments(
-  command: keyof typeof commands,
+  command: CommandName,
   raw: string[],
   flags: PresentationFlags,
   literal = false,
@@ -164,7 +139,7 @@ function parseCommandArguments(
 
 function parse(raw: string[], context: ParseContext): ParsedCli {
   const { flags } = context
-  let command: keyof typeof commands | undefined
+  let command: CommandName | undefined
   let help = false
   let version = false
   let commandStart = raw.length
@@ -173,9 +148,9 @@ function parse(raw: string[], context: ParseContext): ParsedCli {
     const token = raw[index]!
     if (token === '--') {
       const candidate = raw[index + 1]
-      if (!candidate || !(candidate in commands))
+      if (!candidate || !(candidate in COMMANDS))
         throw new UsageError(candidate ? `Unknown command: ${candidate}` : 'No command specified')
-      command = candidate as keyof typeof commands
+      command = candidate as CommandName
       context.command = command
       commandStart = index + 2
       literalCommand = true
@@ -191,8 +166,8 @@ function parse(raw: string[], context: ParseContext): ParsedCli {
     }
     if (setGlobal(flags, token)) continue
     if (token.startsWith('-')) throw new UsageError(`Unknown option: ${token}`)
-    if (!(token in commands)) throw new UsageError(`Unknown command: ${token}`)
-    command = token as keyof typeof commands
+    if (!(token in COMMANDS)) throw new UsageError(`Unknown command: ${token}`)
+    command = token as CommandName
     context.command = command
     commandStart = index + 1
     break
@@ -216,88 +191,6 @@ function parse(raw: string[], context: ParseContext): ParsedCli {
     values: commandArguments.values,
     help,
     version,
-  }
-}
-const publicConfig = (config: PorteauConfig) => ({
-  connection: {
-    host: config.connection.host,
-    port: config.connection.port,
-    user: config.connection.user,
-    tls: config.connection.tls,
-    passwordConfigured: config.connection.password !== undefined,
-  },
-  tools: config.tools,
-  backup: config.backup,
-  restore: config.restore,
-  include: config.include,
-  exclude: config.exclude,
-  objects: config.objects,
-})
-const yamlString = (value: string) => JSON.stringify(value)
-const normalizeRequired = (value: string, label: string) => {
-  const normalized = value.trim()
-  if (!normalized) throw new UsageError(`${label} must not be blank`)
-  return normalized
-}
-const normalizeList = (value: string | boolean, label: string) => {
-  if (typeof value !== 'string') throw new UsageError(`${label} requires a value`)
-  const values = value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-  if (!values.length) throw new UsageError(`${label} requires at least one value`)
-  return values
-}
-function initialYaml(host: string, port: number, user: string | undefined, databases: string[]) {
-  return [
-    '# Porteau configuration (passwords belong in PORTEAU_PASSWORD, never this file)',
-    'connection:',
-    `  host: ${yamlString(host)}`,
-    `  port: ${port}`,
-    ...(user ? [`  user: ${yamlString(user)}`] : []),
-    'include:',
-    '  databases:',
-    ...databases.map((item) => `    - ${yamlString(item)}`),
-    '',
-  ].join('\n')
-}
-
-function restoreSummary(summary: RestoreConfirmation): string {
-  return [
-    `Restore ${summary.sourceDatabase} to ${summary.host}:${summary.port}/${summary.destinationDatabase}`,
-    `Destination: ${summary.destinationExists ? 'exists' : 'will be created'} (${summary.destinationObjects} objects)`,
-    `Destination policy: ${summary.destinationPolicy}`,
-    `Overwrite policy: ${summary.overwritePolicy}`,
-    `Binary log policy: ${summary.binlogPolicy}`,
-  ].join('\n')
-}
-
-async function writeConfigAtomic(
-  path: string,
-  contents: string,
-  signal: AbortSignal,
-): Promise<void> {
-  const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
-  let handle: Awaited<ReturnType<typeof open>> | undefined
-  let published = false
-  try {
-    signal.throwIfAborted()
-    handle = await open(temporary, 'wx', 0o600)
-    await handle.writeFile(contents, 'utf8')
-    await handle.sync()
-    await handle.close()
-    handle = undefined
-    signal.throwIfAborted()
-    // Linking a fully-written sibling is atomic and refuses to replace a path
-    // that appeared after the initial existence check.
-    await link(temporary, path)
-    published = true
-    await rm(temporary)
-  } catch (error) {
-    await handle?.close().catch(() => undefined)
-    await rm(temporary, { force: true }).catch(() => undefined)
-    if (published) return
-    throw error
   }
 }
 
@@ -382,263 +275,16 @@ export async function executeCli(options: CliExecutionOptions = {}): Promise<num
       await presentation.success(name ?? 'porteau', rendered, { help: rendered })
       return controller.signal.aborted ? 130 : 0
     }
-    const a = parsed.values
-    if (name === 'config') {
-      const config = await services.loadConfig({
-        cwd,
-        env,
-        ...(a.config ? { configFile: resolve(cwd, String(a.config)) } : {}),
-      })
-      presentation.registerSecret(config.connection.password)
-      controller.signal.throwIfAborted()
-      await presentation.success(name, JSON.stringify(publicConfig(config), null, 2), {
-        config: publicConfig(config),
-      })
-      return 0
-    }
-    if (name === 'doctor') {
-      const result = await services.collectDiagnostics({
-        ...(a.config ? { configFile: resolve(cwd, String(a.config)) } : {}),
-        env,
-        cwd,
-        signal: controller.signal,
-        diagnostics: { env, signal: controller.signal },
-      })
-      controller.signal.throwIfAborted()
-      if (!result.ok) {
-        await presentation.reportDiagnostics(name, formatDiagnostics(result).join('\n'), result)
-        await presentation.failure(name, 'Diagnostics found blocking dependency issues.', 1)
-        return 1
-      }
-      await presentation.success(name, formatDiagnostics(result).join('\n'), {
-        diagnostics: result,
-      })
-      return 0
-    }
-    if (name === 'init') {
-      const output = resolve(cwd, String(a.output ?? 'porteau.config.yaml'))
-      let host = a.host ? String(a.host) : undefined,
-        user = a.user ? String(a.user) : undefined,
-        databases = a.database ? normalizeList(a.database, '--database') : []
-      if (presentation.interactive) {
-        if (!host) {
-          host = await prompts.text('Database host', controller.signal)
-          controller.signal.throwIfAborted()
-          if (host === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-          host = normalizeRequired(host, 'Database host')
-        }
-        if (!user) {
-          user = await prompts.text('Database user', controller.signal)
-          controller.signal.throwIfAborted()
-          if (user === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-          user = normalizeRequired(user, 'Database user')
-        }
-        if (!databases.length) {
-          const answer = await prompts.text(
-            'Included databases (comma-separated)',
-            controller.signal,
-          )
-          controller.signal.throwIfAborted()
-          if (answer === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-          databases = normalizeList(answer, 'Included databases')
-        }
-      }
-      if (!host) host = 'localhost'
-      else host = normalizeRequired(host, '--host')
-      if (user) user = normalizeRequired(user, '--user')
-      if (!databases.length) throw new UsageError('--database requires at least one value')
-      const port = a.port ? Number(a.port) : 3306
-      if (!Number.isInteger(port) || port < 1 || port > 65535)
-        throw new UsageError('--port must be an integer from 1 to 65535')
-      validateConfig({
-        ...defaultConfig,
-        connection: { ...defaultConfig.connection, host, port, ...(user ? { user } : {}) },
-        include: { databases },
-      })
-      controller.signal.throwIfAborted()
-      try {
-        await writeConfigAtomic(output, initialYaml(host, port, user, databases), controller.signal)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST')
-          throw new Error(`Refusing to overwrite ${output}`)
-        throw error
-      }
-      await presentation.success(name, `Created ${output}`, { path: output })
-      return 0
-    }
-    if (name === 'restore') {
-      const configFile = a.config ? resolve(cwd, String(a.config)) : undefined
-      const restoreFlags = {
-        ...(a['destination-policy'] ? { destinationPolicy: String(a['destination-policy']) } : {}),
-        ...(a['overwrite-policy'] ? { overwritePolicy: String(a['overwrite-policy']) } : {}),
-        ...(a['binlog-policy'] ? { binlogPolicy: String(a['binlog-policy']) } : {}),
-      }
-      let config = await services.loadConfig({
-        cwd,
-        env,
-        ...(configFile ? { configFile } : {}),
-        flags: {
-          ...(a.user ? { connection: { user: String(a.user) } } : {}),
-          ...(Object.keys(restoreFlags).length ? { restore: restoreFlags } : {}),
-        },
-      })
-      controller.signal.throwIfAborted()
-      presentation.registerSecret(config.connection.password)
-      let user = config.connection.user,
-        password = config.connection.password,
-        artifact = a.artifact ? String(a.artifact) : undefined,
-        sourceDatabase = a['source-database'] ? String(a['source-database']) : undefined,
-        destinationDatabase = a['destination-database']
-          ? String(a['destination-database'])
-          : undefined
-      if (user !== undefined) user = normalizeRequired(user, 'Destination database user')
-      if (presentation.interactive) {
-        if (!user) {
-          user = await prompts.text('Destination database user', controller.signal)
-          controller.signal.throwIfAborted()
-          if (user === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-          user = normalizeRequired(user, 'Destination database user')
-        }
-        if (password === undefined) {
-          password = await prompts.password('Destination database password', controller.signal)
-          controller.signal.throwIfAborted()
-          if (password === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-          presentation.registerSecret(password)
-        }
-        if (!artifact) {
-          artifact = await prompts.text('Backup artifact directory', controller.signal)
-          controller.signal.throwIfAborted()
-          if (artifact === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-        }
-        if (!sourceDatabase) {
-          sourceDatabase = await prompts.text('Source database in artifact', controller.signal)
-          controller.signal.throwIfAborted()
-          if (sourceDatabase === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-        }
-        if (!destinationDatabase) {
-          destinationDatabase = await prompts.text('Destination database', controller.signal)
-          controller.signal.throwIfAborted()
-          if (destinationDatabase === undefined)
-            throw Object.assign(new Error(), { name: 'AbortError' })
-        }
-      }
-      if (!user || password === undefined || !artifact || !sourceDatabase || !destinationDatabase)
-        throw new Error(
-          'Restore requires an artifact, source database, destination database, database user, and password',
-        )
-      artifact = normalizeRequired(artifact, 'Backup artifact directory')
-      sourceDatabase = normalizeRequired(sourceDatabase, 'Source database')
-      destinationDatabase = normalizeRequired(destinationDatabase, 'Destination database')
-      config = await services.loadConfig({
-        cwd,
-        env,
-        ...(configFile ? { configFile } : {}),
-        flags: {
-          connection: { user, password },
-          ...(Object.keys(restoreFlags).length ? { restore: restoreFlags } : {}),
-        },
-      })
-      controller.signal.throwIfAborted()
-      presentation.registerSecret(config.connection.password)
-      const result = await services.runRestore({
-        config,
-        request: {
-          artifactPath: resolve(cwd, artifact),
-          sourceDatabase,
-          destinationDatabase,
-          destinationPolicy: config.restore.destinationPolicy,
-          overwritePolicy: config.restore.overwritePolicy,
-          binlogPolicy: config.restore.binlogPolicy,
-        },
-        configDirectory: configFile ? dirname(configFile) : cwd,
-        signal: controller.signal,
-        environment: env,
-        onEvent: (event) => presentation.progress(name, event),
-        async confirm(summary) {
-          const rendered = restoreSummary(summary)
-          await presentation.disclose(name, rendered, { summary })
-          controller.signal.throwIfAborted()
-          if (parsed.flags.yes) return true
-          if (!presentation.interactive)
-            throw new Error('Restore requires --yes in non-interactive mode')
-          const answer = await prompts.confirm('Apply this restore plan?', controller.signal)
-          controller.signal.throwIfAborted()
-          if (answer !== true)
-            throw Object.assign(new Error('Restore cancelled before destination mutation'), {
-              name: 'AbortError',
-            })
-          return true
-        },
-      })
-      controller.signal.throwIfAborted()
-      await presentation.success(name, `Restore completed: ${result.destinationDatabase}`, {
-        destinationDatabase: result.destinationDatabase,
-        warnings: result.warnings,
-      })
-      return 0
-    }
-    const configFile = a.config ? resolve(cwd, String(a.config)) : undefined
-    let config = await services.loadConfig({
-      cwd,
+    return await COMMANDS[name].run({
+      values: parsed.values,
+      flags: parsed.flags,
+      presentation,
+      prompts,
+      services,
       env,
-      ...(configFile ? { configFile } : {}),
-      flags: {
-        ...(a.user ? { connection: { user: String(a.user) } } : {}),
-        ...(a.database ? { include: { databases: normalizeList(a.database, '--database') } } : {}),
-      },
-    })
-    controller.signal.throwIfAborted()
-    presentation.registerSecret(config.connection.password)
-    let user = config.connection.user,
-      password = config.connection.password,
-      databases = config.include.databases
-    if (user !== undefined) user = normalizeRequired(user, 'Database user')
-    if (presentation.interactive) {
-      if (!user) {
-        user = await prompts.text('Database user', controller.signal)
-        controller.signal.throwIfAborted()
-        if (user === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-        user = normalizeRequired(user, 'Database user')
-      }
-      if (password === undefined) {
-        password = await prompts.password('Database password', controller.signal)
-        controller.signal.throwIfAborted()
-        if (password === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-        presentation.registerSecret(password)
-      }
-      if (!databases.length) {
-        const answer = await prompts.text('Included databases (comma-separated)', controller.signal)
-        controller.signal.throwIfAborted()
-        if (answer === undefined) throw Object.assign(new Error(), { name: 'AbortError' })
-        databases = normalizeList(answer, 'Included databases')
-      }
-    }
-    if (!user || password === undefined || !databases.length)
-      throw new Error(
-        'Backup requires a database user, password, and at least one included database',
-      )
-    config = await services.loadConfig({
       cwd,
-      env,
-      ...(configFile ? { configFile } : {}),
-      flags: { connection: { user, password }, include: { databases } },
-    })
-    controller.signal.throwIfAborted()
-    presentation.registerSecret(config.connection.password)
-    const result = await services.runBackup({
-      config,
-      configDirectory: configFile ? dirname(configFile) : cwd,
-      ...(a.output ? { outputDirectory: String(a.output) } : {}),
       signal: controller.signal,
-      environment: env,
-      onEvent: (event) => presentation.progress(name, event),
     })
-    controller.signal.throwIfAborted()
-    await presentation.success(name, `Backup completed: ${result.outputDirectory}`, {
-      outputDirectory: result.outputDirectory,
-      warnings: result.warnings,
-    })
-    return 0
   } catch (error) {
     const cancelled =
       controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')
@@ -659,4 +305,5 @@ export async function executeCli(options: CliExecutionOptions = {}): Promise<num
     process.removeListener('SIGTERM', abort)
   }
 }
+
 if (import.meta.main) process.exitCode = await executeCli()
