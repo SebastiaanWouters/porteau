@@ -277,12 +277,16 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
         )
       )
     }
-    const usesLockStrategy = request.config.backup.consistency.mode === 'auto'
-    const globalRequired = usesLockStrategy
-      ? product === 'mysql'
-        ? ['RELOAD', 'PROCESS', 'BACKUP_ADMIN']
-        : ['RELOAD', 'PROCESS']
-      : ['REPLICATION CLIENT']
+    const consistencyMode = request.config.backup.consistency.mode
+    const usesLockStrategy = consistencyMode === 'auto'
+    const globalRequired =
+      consistencyMode === 'auto'
+        ? product === 'mysql'
+          ? ['RELOAD', 'PROCESS', 'BACKUP_ADMIN']
+          : ['RELOAD', 'PROCESS']
+        : consistencyMode === 'safe-no-lock'
+          ? ['REPLICATION CLIENT']
+          : []
     if (profile === 'replica' && !globalRequired.includes('REPLICATION CLIENT'))
       globalRequired.push('REPLICATION CLIENT')
     const dataRequired = ['SELECT']
@@ -297,7 +301,9 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
       ),
     ]
     if (absent.length > 0)
-      throw new Error(`Insufficient privileges for safe lock strategy: ${absent.join(', ')}`)
+      throw new Error(
+        `Insufficient privileges for ${consistencyMode} strategy: ${absent.join(', ')}`,
+      )
     const privileges = [
       ...new Set(
         grants.filter((grant) => !grant.revoked).flatMap((grant) => [...grant.privileges]),

@@ -42,6 +42,18 @@ porteau backup \
 
 The final output directory must not exist. Porteau writes to a temporary sibling directory, validates native completion and artifact metadata, then publishes the artifact atomically. On failure or cancellation it removes partial output and temporary credentials.
 
+Default backups use mydumper's lock-based consistency strategy and need global privileges. If you only have database-scoped grants, opt into `no-lock`:
+
+```yaml
+backup:
+  consistency:
+    mode: no-lock
+    requireInnoDB: true
+    protectDdl: false
+```
+
+`no-lock` still requires `SELECT` (plus `SHOW VIEW` / `TRIGGER` when those objects are enabled). It does not need `REPLICATION CLIENT`. It does not guarantee a consistent snapshot across concurrent writes.
+
 Restore into a new or staging database and review the disclosed plan before confirming:
 
 ```sh

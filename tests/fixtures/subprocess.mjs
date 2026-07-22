@@ -18,6 +18,8 @@ if (['mydumper', 'myloader'].includes(toolName) && process.argv.includes('--vers
 }
 
 if (toolName === 'mydumper') {
+  if (process.env.PORTEAU_FIXTURE_INVOCATION)
+    await writeFile(process.env.PORTEAU_FIXTURE_INVOCATION, JSON.stringify(process.argv.slice(2)))
   const output = process.argv.find((argument) => argument.startsWith('--outputdir='))?.slice(12)
   if (!output) throw new Error('missing output directory')
   await mkdir(output)

@@ -108,6 +108,60 @@ describe('safe backup service', () => {
     await expect(lstat(join(cwd, 'never-finalized'))).rejects.toThrow()
   })
 
+  it('invokes mydumper NO_LOCK without throttle for no-lock mode', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-no-lock-'))
+    directories.push(cwd)
+    await symlink(fixture, join(cwd, 'mydumper'))
+    await symlink(fixture, join(cwd, 'myloader'))
+    const invocation = join(cwd, 'invocation.json')
+    const config = {
+      ...defaultConfig,
+      connection: { ...defaultConfig.connection, user: 'backup', password: 'secret' },
+      include: { databases: ['app'] },
+      backup: {
+        ...defaultConfig.backup,
+        directory: './no-lock-final',
+        compression: 'none',
+        consistency: {
+          ...defaultConfig.backup.consistency,
+          mode: 'no-lock',
+          protectDdl: false,
+        },
+      },
+    } as PorteauConfig
+    const grants = [
+      {
+        grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO backup',
+      },
+    ]
+
+    await expect(
+      runBackup({
+        config,
+        configDirectory: cwd,
+        environment: {
+          PATH: `${cwd}${delimiter}${dirname(process.execPath)}`,
+          PORTEAU_FIXTURE_INVOCATION: invocation,
+        },
+        connectionFactory: async () => {
+          const base = connection()
+          return {
+            ...base,
+            async query(sql) {
+              if (sql === 'SHOW GRANTS') return grants
+              return base.query(sql)
+            },
+          }
+        },
+      }),
+    ).resolves.toEqual({ outputDirectory: join(cwd, 'no-lock-final'), warnings: 0 })
+    const args = JSON.parse(await readFile(invocation, 'utf8')) as string[]
+    expect(args).toContain('--sync-thread-lock-mode=NO_LOCK')
+    expect(args).toContain('--skip-ddl-locks')
+    expect(args).toContain('--ignore-errors=1227')
+    expect(args.some((argument) => argument.startsWith('--throttle='))).toBe(false)
+  })
+
   it.each([
     ['missing lifecycle transition', { PORTEAU_FIXTURE_LIFECYCLE: 'missing' }],
     ['reordered lifecycle transition', { PORTEAU_FIXTURE_LIFECYCLE: 'reordered' }],

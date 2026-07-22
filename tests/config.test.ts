@@ -164,7 +164,11 @@ describe('configuration contract', () => {
     { profile: 'production', consistency: { mode: 'safe-no-lock' } },
     { profile: 'replica', consistency: { requireInnoDB: false } },
     { profile: 'production', consistency: { protectDdl: false } },
-  ])('rejects weakened consistency outside expert mode', async (backup) => {
+    {
+      profile: 'production',
+      consistency: { mode: 'no-lock', requireInnoDB: true, protectDdl: true },
+    },
+  ])('rejects unqualified consistency configurations', async (backup) => {
     await expect(
       loadConfig({ cwd: await createWorkspace(), env: {}, flags: { backup } }),
     ).rejects.toThrow(/unsafe or unqualified/)
@@ -183,6 +187,21 @@ describe('configuration contract', () => {
     })
 
     expect(config.backup.profile).toBe('expert')
+  })
+
+  it('allows no-lock outside expert mode when DDL protection is disabled', async () => {
+    const config = await loadConfig({
+      cwd: await createWorkspace(),
+      env: {},
+      flags: {
+        backup: {
+          consistency: { mode: 'no-lock', requireInnoDB: true, protectDdl: false },
+        },
+      },
+    })
+
+    expect(config.backup.consistency.mode).toBe('no-lock')
+    expect(config.backup.profile).toBe('production')
   })
 
   it.each(['verify-ca', 'verify-identity'])(

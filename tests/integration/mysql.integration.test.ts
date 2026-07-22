@@ -70,6 +70,8 @@ suite('Porteau against pinned MySQL and mydumper', () => {
       CREATE USER 'no_lock_backup'@'%' IDENTIFIED BY 'no-lock-only';
       GRANT SELECT, SHOW VIEW, TRIGGER ON safe_app.* TO 'no_lock_backup'@'%';
       GRANT REPLICATION CLIENT ON *.* TO 'no_lock_backup'@'%';
+      CREATE USER 'best_effort_backup'@'%' IDENTIFIED BY 'best-effort-only';
+      GRANT SELECT, SHOW VIEW, TRIGGER ON safe_app.* TO 'best_effort_backup'@'%';
     `)
     await db.end()
   }, 60_000)
@@ -219,6 +221,33 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     expect(await readdir(output)).toContain('safe_app.rows-schema.sql')
   }, 90_000)
 
+  it('backs up in no-lock mode without any global privileges', async () => {
+    const output = join(root, 'no-lock')
+    const backupConfig = config('safe_app', output)
+    const noLockConfig: PorteauConfig = {
+      ...backupConfig,
+      connection: {
+        ...backupConfig.connection,
+        user: 'best_effort_backup',
+        password: 'best-effort-only',
+      },
+      backup: {
+        ...backupConfig.backup,
+        consistency: {
+          ...backupConfig.backup.consistency,
+          mode: 'no-lock',
+          protectDdl: false,
+        },
+      },
+    }
+
+    await expect(runBackup({ config: noLockConfig })).resolves.toEqual({
+      outputDirectory: output,
+      warnings: expect.any(Number),
+    })
+    expect(await readdir(output)).toContain('safe_app.rows-schema.sql')
+  }, 90_000)
+
   it('rejects a selected nontransactional table before creating output', async () => {
     const output = join(root, 'unsafe')
     await expect(runBackup({ config: config('unsafe_app', output) })).rejects.toThrow(/non-InnoDB/)
@@ -240,7 +269,7 @@ suite('Porteau against pinned MySQL and mydumper', () => {
         databases: ['safe_app'],
         tablePatterns: ['safe_app.*'],
       }),
-    ).rejects.toThrow(/safe lock strategy: SELECT/u)
+    ).rejects.toThrow(/auto strategy: SELECT/u)
     await expect(
       runRestorePreflight({
         config: partialConfig,

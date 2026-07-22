@@ -6,7 +6,7 @@ import { defineCommand, type CommandContext } from './types.js'
 export const backupCommand = defineCommand({
   meta: {
     name: 'backup',
-    description: 'Create a consistent logical backup',
+    description: 'Create a logical backup',
   },
   args: {
     config: {
@@ -75,6 +75,14 @@ export const backupCommand = defineCommand({
     })
     signal.throwIfAborted()
     presentation.registerSecret(config.connection.password)
+    if (config.backup.consistency.mode === 'no-lock') {
+      await presentation.disclose(
+        'backup',
+        'Warning: no-lock does not guarantee a consistent snapshot across concurrent writes.',
+        { consistencyMode: 'no-lock' },
+      )
+      signal.throwIfAborted()
+    }
     const result = await services.runBackup({
       config,
       configDirectory: configFile ? dirname(configFile) : cwd,

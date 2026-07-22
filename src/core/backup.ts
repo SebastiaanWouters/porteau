@@ -68,6 +68,12 @@ function outputPath(config: PorteauConfig, override: string | undefined, cwd: st
   return resolve(cwd, expanded)
 }
 
+function syncThreadLockMode(mode: PorteauConfig['backup']['consistency']['mode']): string {
+  if (mode === 'auto') return 'AUTO'
+  if (mode === 'safe-no-lock') return 'SAFE_NO_LOCK'
+  return 'NO_LOCK'
+}
+
 function backupArguments(
   config: PorteauConfig,
   defaultsFile: string,
@@ -82,7 +88,7 @@ function backupArguments(
     `--regex=${exactTableRegex(selectedTables)}`,
     `--threads=${config.backup.threads}`,
     `--max-threads-per-table=${config.backup.maxThreadsPerTable}`,
-    `--sync-thread-lock-mode=${config.backup.consistency.mode === 'auto' ? 'AUTO' : 'SAFE_NO_LOCK'}`,
+    `--sync-thread-lock-mode=${syncThreadLockMode(config.backup.consistency.mode)}`,
     '--trx-tables',
     `--ftwrl-max-wait-time=${config.backup.consistency.startupLockTimeoutSeconds}`,
     `--ftwrl-timeout-retries=${Math.max(1, config.backup.consistency.lockRetries + 1)}`,
@@ -91,10 +97,13 @@ function backupArguments(
   if (!config.backup.consistency.protectDdl) args.push('--skip-ddl-locks')
   if (config.objects.triggers) args.push('--triggers')
   if (!config.objects.views) args.push('--no-views')
-  if (config.backup.throttle.enabled) {
+  // SHOW GLOBAL STATUS for throttle needs PROCESS; no-lock targets users without it.
+  if (config.backup.throttle.enabled && config.backup.consistency.mode !== 'no-lock') {
     const threshold = config.backup.throttle.threshold ?? Math.max(4, config.backup.threads)
     args.push(`--throttle=Threads_running=${threshold}`)
   }
+  // NO_LOCK still probes binlog coordinates; tolerate missing REPLICATION CLIENT.
+  if (config.backup.consistency.mode === 'no-lock') args.push('--ignore-errors=1227')
   return args
 }
 

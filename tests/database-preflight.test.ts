@@ -261,7 +261,7 @@ describe('read-only backup preflight', () => {
   it('rejects replica profile on a primary and insufficient safe-lock privileges', async () => {
     await expect(preflight({}, 'replica')).rejects.toThrow(/configured replica/u)
     await expect(preflight({ grants: [{ grant: 'GRANT SELECT ON *.* TO user' }] })).rejects.toThrow(
-      /safe lock strategy/u,
+      /auto strategy/u,
     )
   })
 
@@ -276,7 +276,7 @@ describe('read-only backup preflight', () => {
             { grant: 'GRANT SHOW VIEW, TRIGGER ON `app`.* TO user' },
           ],
         }),
-      ).rejects.toThrow(/safe lock strategy/)
+      ).rejects.toThrow(/auto strategy/)
     },
   )
 
@@ -332,7 +332,7 @@ describe('read-only backup preflight', () => {
             { grant: `REVOKE ${privilege} ON \`app\`.* FROM user` },
           ],
         }),
-      ).rejects.toThrow(/safe lock strategy/u)
+      ).rejects.toThrow(/auto strategy/u)
     },
   )
 
@@ -351,7 +351,55 @@ describe('read-only backup preflight', () => {
         tablePatterns: ['app.*'],
         connectionFactory: async () => state.connection,
       }),
-    ).rejects.toThrow(/safe lock strategy/)
+    ).rejects.toThrow(/auto strategy/)
+  })
+
+  it('accepts no-lock with only database-scoped privileges', async () => {
+    const state = fake({
+      grants: [{ grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO user' }],
+    })
+
+    await expect(
+      runBackupPreflight({
+        config: {
+          ...safeNoLockConfig(),
+          backup: {
+            ...safeNoLockConfig().backup,
+            consistency: {
+              ...safeNoLockConfig().backup.consistency,
+              mode: 'no-lock',
+            },
+          },
+        },
+        databases: ['app'],
+        tablePatterns: ['app.*'],
+        connectionFactory: async () => state.connection,
+      }),
+    ).resolves.toHaveProperty('tables')
+  })
+
+  it('still requires SELECT for no-lock backups', async () => {
+    const state = fake({
+      grants: [{ grant: 'GRANT SHOW VIEW, TRIGGER ON `app`.* TO user' }],
+    })
+
+    await expect(
+      runBackupPreflight({
+        config: {
+          ...safeNoLockConfig(),
+          backup: {
+            ...safeNoLockConfig().backup,
+            consistency: {
+              ...safeNoLockConfig().backup.consistency,
+              mode: 'no-lock',
+            },
+          },
+        },
+        databases: ['app'],
+        tablePatterns: ['app.*'],
+        connectionFactory: async () => state.connection,
+      }),
+    ).rejects.toThrow(/no-lock strategy: SELECT/u)
   })
 })
 

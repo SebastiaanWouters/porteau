@@ -24,7 +24,7 @@ const configSchema = v.pipe(
       maxThreadsPerTable: v.pipe(v.number(), v.integer(), v.minValue(1)),
       compression: v.picklist(['none', 'gzip', 'zstd']),
       consistency: v.strictObject({
-        mode: v.picklist(['auto', 'safe-no-lock']),
+        mode: v.picklist(['auto', 'safe-no-lock', 'no-lock']),
         requireInnoDB: v.boolean(),
         protectDdl: v.boolean(),
         startupLockTimeoutSeconds: v.pipe(v.number(), v.minValue(1)),
@@ -56,16 +56,13 @@ const configSchema = v.pipe(
       events: v.boolean(),
     }),
   }),
-  v.check(
-    ({ backup }) =>
-      backup.profile === 'expert'
-        ? backup.consistency.requireInnoDB &&
-          (backup.consistency.mode === 'auto' || !backup.consistency.protectDdl)
-        : backup.consistency.mode === 'auto' &&
-          backup.consistency.requireInnoDB &&
-          backup.consistency.protectDdl,
-    'The selected profile has an unsafe or unqualified consistency configuration',
-  ),
+  v.check(({ backup }) => {
+    const { mode, requireInnoDB, protectDdl } = backup.consistency
+    if (!requireInnoDB) return false
+    if (mode === 'auto') return protectDdl
+    if (mode === 'no-lock') return !protectDdl
+    return backup.profile === 'expert' && !protectDdl
+  }, 'The selected profile has an unsafe or unqualified consistency configuration'),
   v.check(
     ({ connection }) => !['verify-ca', 'verify-identity'].includes(connection.tls),
     'CA-verified TLS requires certificate configuration that is not available yet',

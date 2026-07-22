@@ -111,6 +111,44 @@ describe('guided backup', () => {
     ).toBe(2)
   })
 
+  it('discloses a no-lock consistency warning before running backup', async () => {
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const runBackup = vi.fn(async () => ({ outputDirectory: '/backup', warnings: 0 }))
+    expect(
+      await executeCli({
+        args: ['backup', '--json', '--no-interactive'],
+        stdout: (line) => stdout.push(line),
+        stderr: (line) => stderr.push(line),
+        services: {
+          loadConfig: async () => ({
+            ...config({ user: 'backup', password: 'secret', databases: ['app'] }),
+            backup: {
+              ...config().backup,
+              consistency: {
+                ...config().backup.consistency,
+                mode: 'no-lock',
+                protectDdl: false,
+              },
+            },
+          }),
+          runBackup,
+        },
+      }),
+    ).toBe(0)
+    expect(runBackup).toHaveBeenCalledOnce()
+    const records = stdout.map((line) => JSON.parse(line))
+    expect(records[0]).toMatchObject({
+      type: 'event',
+      event: {
+        type: 'plan',
+        message:
+          'Warning: no-lock does not guarantee a consistent snapshot across concurrent writes.',
+        data: { consistencyMode: 'no-lock' },
+      },
+    })
+  })
+
   it('redacts configured secrets from JSON events and failures and settles progress', async () => {
     const secret = 'yaml-secret-sentinel'
     const stdout: string[] = []
