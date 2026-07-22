@@ -2,36 +2,21 @@
 
 Porteau is a safety-first CLI for consistent MySQL logical backups and restores with `mydumper` and `myloader`. It validates the database and native tools before execution, publishes backup artifacts atomically, and discloses the resolved restore policy before requiring approval to change a destination.
 
-Porteau `0.1.0-alpha.2` is an alpha release. Test backups and restores against disposable databases before production use.
+Porteau is an alpha release. Test backups and restores against disposable databases before production use.
 
 ## Installation
 
-The installer supports Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64/arm64. It shows its plan, asks before changing anything, and installs Porteau plus compatible Node.js, `mydumper`, and `myloader` dependencies:
-
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/sebastiaanwouters/porteau/releases/download/v0.1.0-alpha.2/install.sh | bash
+  https://raw.githubusercontent.com/sebastiaanwouters/porteau/main/install.sh | bash
 ```
 
-Porteau is installed without `sudo` under `~/.local`; `sudo` is limited to disclosed system package changes. The native package is checksum-verified, the Node.js repository key is fingerprint-verified, and Porteau is installed at the exact release version with npm lifecycle scripts disabled. The completed installation runs `porteau doctor` and prints PATH guidance when needed.
+Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64/arm64. Shows a plan before changing the system. Add `| bash -s -- --yes` for unattended installs.
 
-For unattended installation:
+Other platforms: install Node.js 22.18+, matching mydumper/myloader, then
+`npm install --global --prefix "$HOME/.local" --ignore-scripts porteau@next`.
 
-```sh
-curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/sebastiaanwouters/porteau/releases/download/v0.1.0-alpha.2/install.sh |
-  bash -s -- --yes
-```
-
-On other platforms, install Node.js 22.18 or newer and matching `mydumper`/`myloader` 1.0.3-1 or newer, then install the alpha package:
-
-```sh
-npm install --global --prefix "$HOME/.local" --ignore-scripts porteau@0.1.0-alpha.2
-export PATH="$HOME/.local/bin:$PATH"
-porteau doctor
-```
-
-Porteau targets MySQL 8.4 and requires InnoDB tables for consistent production backups. Unlisted platforms remain unqualified.
+Older alphas: download `install.sh` from a [GitHub release](https://github.com/sebastiaanwouters/porteau/releases), or `porteau@X.Y.Z-alpha.N`.
 
 ## Quick start
 
