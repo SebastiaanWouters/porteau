@@ -16,10 +16,6 @@ version="${GITHUB_REF_NAME#v}"
   exit 2
 }
 
-# Trusted publishing (OIDC) only — clear any token setup-node / secrets may inject.
-unset NPM_TOKEN NODE_AUTH_TOKEN
-export NPM_TOKEN='' NODE_AUTH_TOKEN=''
-
 npm_version="$(npm --version)"
 node -e 'const [v,min]=process.argv.slice(1).map(x=>x.split(".").map(Number)); process.exit(v[0]>min[0] || (v[0]===min[0] && (v[1]>min[1] || (v[1]===min[1] && v[2]>=min[2]))) ? 0 : 1)' \
   "$npm_version" 11.5.1

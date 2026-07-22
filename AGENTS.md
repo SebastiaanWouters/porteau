@@ -17,12 +17,19 @@ Run `vp check`, `vp test`, and `vp pack` before finishing code changes.
    - publish to npm via **trusted publishing OIDC** (no `NPM_TOKEN`), with provenance, `--ignore-scripts`, and dist-tag `next` (never `latest` for alphas)
    - attach both `install.sh` and `porteau.tgz` to a verified GitHub prerelease, then smoke the public installer URL
 
-### npm Trusted Publisher (required)
+### npm Trusted Publisher (required, one-time)
 
-On https://www.npmjs.com/package/porteau → Access → Trusted Publishers:
+No long-lived `NPM_TOKEN`. Configure OIDC once, then tag pushes publish.
 
-- Provider: GitHub Actions
+On https://www.npmjs.com/package/porteau → **Access** → **Trusted Publishers** → **GitHub Actions**:
+
 - Repository: `SebastiaanWouters/porteau`
 - Workflow filename: `release.yml`
-- Environment: leave empty (workflow does not use a GitHub Environment)
-- Allow: `npm publish`
+- Environment: leave empty
+- Allow: publish
+
+Or from a logged-in maintainer machine:
+
+```sh
+npm trust github porteau --file release.yml --repo SebastiaanWouters/porteau --allow-publish -y
+```
