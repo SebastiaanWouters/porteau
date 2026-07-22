@@ -4,9 +4,10 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import mysql from 'mysql2/promise'
 import { afterAll, beforeAll, describe, expect, it } from 'vite-plus/test'
-import { runBackup } from '../../src/core/backup.js'
-import { defaultConfig, type PorteauConfig } from '../../src/core/config.js'
+import { runBackup, type RunBackupOptions } from '../../src/core/backup.js'
+import { defaultConfig, defaultServer, type PorteauConfig } from '../../src/core/config.js'
 import { runBackupPreflight, runRestorePreflight } from '../../src/core/preflight.js'
+import { resolveRun } from '../../src/core/runtime-config.js'
 import { runRestore } from '../../src/core/restore.js'
 
 const enabled = process.env.PORTEAU_MYSQL_INTEGRATION === '1'
@@ -37,6 +38,41 @@ function config(database: string, output: string): PorteauConfig {
       throttle: { ...defaultConfig.backup.throttle, enabled: false },
     },
   } as PorteauConfig
+}
+
+function runArgs(
+  cfg: PorteauConfig,
+  extras: Omit<RunBackupOptions, 'run' | 'credentials'> = {},
+): RunBackupOptions {
+  const server = defaultServer(cfg)
+  if (!server.user || server.password === undefined) {
+    throw new Error('integration config requires user and password')
+  }
+  return {
+    run: resolveRun(cfg, undefined, { configDirectory: process.cwd() }),
+    credentials: { user: server.user, password: server.password },
+    outputDirectory: cfg.artifacts.directory,
+    ...extras,
+  }
+}
+
+function backupPreflightArgs(cfg: PorteauConfig, databases: readonly string[]) {
+  const server = defaultServer(cfg)
+  return {
+    connection: {
+      host: server.host,
+      port: server.port,
+      ...(server.user !== undefined ? { user: server.user } : {}),
+      ...(server.password !== undefined ? { password: server.password } : {}),
+      tls: server.tls,
+    },
+    databases,
+    tablePatterns: databases.map((database) => `${database}.*`),
+    includeViews: cfg.objects.views,
+    includeTriggers: cfg.objects.triggers,
+    profile: cfg.backup.profile,
+    consistencyMode: cfg.backup.consistency.mode,
+  }
 }
 
 suite('Porteau against pinned MySQL and mydumper', () => {
@@ -107,12 +143,13 @@ suite('Porteau against pinned MySQL and mydumper', () => {
       exclude: { tables: ['safe_app.excluded'], data: ['safe_app.schema_only'] },
     }
     try {
-      await runBackup({
-        config: backupConfig,
-        onEvent(event) {
-          events.push(`${event.sourceEvent}/${event.sourcePhase}/${event.sourceStatus}`)
-        },
-      })
+      await runBackup(
+        runArgs(backupConfig, {
+          onEvent(event) {
+            events.push(`${event.sourceEvent}/${event.sourcePhase}/${event.sourceStatus}`)
+          },
+        }),
+      )
     } finally {
       writing = false
       await writeLoop
@@ -219,7 +256,7 @@ suite('Porteau against pinned MySQL and mydumper', () => {
       },
     }
 
-    await expect(runBackup({ config: noLockConfig })).resolves.toEqual({
+    await expect(runBackup(runArgs(noLockConfig))).resolves.toEqual({
       outputDirectory: output,
       warnings: expect.any(Number),
     })
@@ -248,7 +285,7 @@ suite('Porteau against pinned MySQL and mydumper', () => {
       },
     }
 
-    await expect(runBackup({ config: noLockConfig })).resolves.toEqual({
+    await expect(runBackup(runArgs(noLockConfig))).resolves.toEqual({
       outputDirectory: output,
       warnings: expect.any(Number),
     })
@@ -257,7 +294,7 @@ suite('Porteau against pinned MySQL and mydumper', () => {
 
   it('rejects a selected nontransactional table before creating output', async () => {
     const output = join(root, 'unsafe')
-    await expect(runBackup({ config: config('unsafe_app', output) })).rejects.toThrow(/non-InnoDB/)
+    await expect(runBackup(runArgs(config('unsafe_app', output)))).rejects.toThrow(/non-InnoDB/)
     await expect(readdir(output)).rejects.toThrow()
   })
 
@@ -274,11 +311,7 @@ suite('Porteau against pinned MySQL and mydumper', () => {
       },
     }
     await expect(
-      runBackupPreflight({
-        config: partialConfig,
-        databases: ['safe_app'],
-        tablePatterns: ['safe_app.*'],
-      }),
+      runBackupPreflight(backupPreflightArgs(partialConfig, ['safe_app'])),
     ).rejects.toThrow(/auto strategy: SELECT/u)
     await expect(
       runRestorePreflight({
@@ -295,13 +328,14 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     const output = join(root, 'cancelled')
     const controller = new AbortController()
     await expect(
-      runBackup({
-        config: config('safe_app', output),
-        signal: controller.signal,
-        onEvent(event) {
-          if (event.sourceEvent === 'dump_phase') controller.abort()
-        },
-      }),
+      runBackup(
+        runArgs(config('safe_app', output), {
+          signal: controller.signal,
+          onEvent(event) {
+            if (event.sourceEvent === 'dump_phase') controller.abort()
+          },
+        }),
+      ),
     ).rejects.toThrow(/cancel/i)
     await expect(readdir(output)).rejects.toThrow()
     const parent = await readdir(root)

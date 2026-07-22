@@ -63,7 +63,7 @@ describe('guided backup', () => {
         services: {
           loadConfig: async (options) => {
             loads.push(options)
-            return config()
+            return config({ databases: ['app', 'audit'] })
           },
           runBackup,
         },
@@ -74,14 +74,12 @@ describe('guided backup', () => {
     expect(runBackup).toHaveBeenCalledOnce()
     expect(runBackup).toHaveBeenCalledWith(
       expect.objectContaining({
-        databases: ['app', 'audit'],
-        config: expect.objectContaining({
-          servers: expect.objectContaining({
-            local: expect.objectContaining({
-              user: 'backup_user',
-              password: 'prompt-secret',
-            }),
-          }),
+        credentials: { user: 'backup_user', password: 'prompt-secret' },
+        run: expect.objectContaining({
+          databases: [
+            expect.objectContaining({ id: 'app', name: 'app' }),
+            expect.objectContaining({ id: 'audit', name: 'audit' }),
+          ],
         }),
       }),
     )

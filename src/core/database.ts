@@ -47,8 +47,16 @@ export function tlsOptions(mode: ServerConfig['tls'], _host: string): Connection
   return { rejectUnauthorized: true }
 }
 
+export type ConnectionEndpoint = {
+  readonly host: string
+  readonly port: number
+  readonly user?: string | undefined
+  readonly password?: string | undefined
+  readonly tls: ServerConfig['tls']
+}
+
 export function connectionOptions(
-  server: ServerConfig,
+  server: ConnectionEndpoint,
   timeoutMilliseconds = 10_000,
 ): ConnectionOptions {
   const ssl = tlsOptions(server.tls, server.host)

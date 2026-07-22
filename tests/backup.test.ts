@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vite-plus/test'
 import { runBackup } from '../src/core/backup.js'
 import { defaultConfig, type PorteauConfig } from '../src/core/config.js'
 import type { QueryConnection } from '../src/core/database.js'
+import { resolveRun } from '../src/core/runtime-config.js'
 
 const fixture = fileURLToPath(new URL('./fixtures/subprocess.mjs', import.meta.url))
 const directories: string[] = []
@@ -68,32 +69,46 @@ function backupConfig(
   } as PorteauConfig
 }
 
+function backupOptions(
+  cwd: string,
+  artifactsDirectory: string,
+  overrides: Partial<PorteauConfig> = {},
+  extra: { readonly outputDirectory?: string } = {},
+) {
+  const config = backupConfig(artifactsDirectory, overrides)
+  return {
+    run: resolveRun(config, undefined, { configDirectory: cwd }),
+    credentials: { user: 'backup', password: 'secret' },
+    configDirectory: cwd,
+    environment: { PATH: `${cwd}${delimiter}${dirname(process.execPath)}` },
+    connectionFactory: async () => connection(),
+    ...(extra.outputDirectory !== undefined ? { outputDirectory: extra.outputDirectory } : {}),
+  }
+}
+
+function defaultOutput(
+  cwd: string,
+  artifactsDirectory: string,
+  date = new Date().toISOString().slice(0, 10),
+) {
+  return join(cwd, artifactsDirectory, `app-${date}`)
+}
+
 describe('safe backup service', () => {
-  it('requires tool, preflight, event, process and artifact agreement before atomic finalization', async () => {
+  it('publishes under artifacts root/{database-key}-{date} when output is omitted', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'porteau-backup-'))
     directories.push(cwd)
     await chmod(fixture, 0o755)
     await symlink(fixture, join(cwd, 'mydumper'))
     await symlink(fixture, join(cwd, 'myloader'))
-    const config = backupConfig('./final')
+    const expected = defaultOutput(cwd, './final')
 
-    await expect(
-      runBackup({
-        config,
-        configDirectory: cwd,
-        environment: { PATH: `${cwd}${delimiter}${dirname(process.execPath)}` },
-        connectionFactory: async () => connection(),
-      }),
-    ).resolves.toEqual({ outputDirectory: join(cwd, 'final'), warnings: 0 })
-    expect(await readFile(join(cwd, 'final', 'metadata'), 'utf8')).toContain('[`app`.`users`]')
-    await expect(
-      runBackup({
-        config,
-        configDirectory: cwd,
-        environment: { PATH: `${cwd}${delimiter}${dirname(process.execPath)}` },
-        connectionFactory: async () => connection(),
-      }),
-    ).rejects.toThrow(/already exists/)
+    await expect(runBackup(backupOptions(cwd, './final'))).resolves.toEqual({
+      outputDirectory: expected,
+      warnings: 0,
+    })
+    expect(await readFile(join(expected, 'metadata'), 'utf8')).toContain('[`app`.`users`]')
+    await expect(runBackup(backupOptions(cwd, './final'))).rejects.toThrow(/already exists/)
   })
 
   it('keeps the lock watchdog armed until a qualified post-unlock event', async () => {
@@ -101,20 +116,18 @@ describe('safe backup service', () => {
     directories.push(cwd)
     await symlink(fixture, join(cwd, 'mydumper'))
     await symlink(fixture, join(cwd, 'myloader'))
-    const config = backupConfig('./never-finalized')
+    const expected = defaultOutput(cwd, './never-finalized')
 
     await expect(
       runBackup({
-        config,
-        configDirectory: cwd,
+        ...backupOptions(cwd, './never-finalized'),
         environment: {
           PATH: `${cwd}${delimiter}${dirname(process.execPath)}`,
           PORTEAU_FIXTURE_LOCK_HANG: '1',
         },
-        connectionFactory: async () => connection(),
       }),
     ).rejects.toThrow(/safety budget/)
-    await expect(lstat(join(cwd, 'never-finalized'))).rejects.toThrow()
+    await expect(lstat(expected)).rejects.toThrow()
   }, 20_000)
 
   it('invokes mydumper NO_LOCK without throttle for no-lock mode', async () => {
@@ -123,17 +136,7 @@ describe('safe backup service', () => {
     await symlink(fixture, join(cwd, 'mydumper'))
     await symlink(fixture, join(cwd, 'myloader'))
     const invocation = join(cwd, 'invocation.json')
-    const config = backupConfig('./no-lock-final', {
-      backup: {
-        ...defaultConfig.backup,
-        compression: 'none',
-        consistency: {
-          ...defaultConfig.backup.consistency,
-          mode: 'no-lock',
-          protectDdl: false,
-        },
-      },
-    })
+    const expected = join(cwd, 'no-lock-final')
     const grants = [
       {
         grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO backup',
@@ -142,8 +145,22 @@ describe('safe backup service', () => {
 
     await expect(
       runBackup({
-        config,
-        configDirectory: cwd,
+        ...backupOptions(
+          cwd,
+          './artifacts',
+          {
+            backup: {
+              ...defaultConfig.backup,
+              compression: 'none',
+              consistency: {
+                ...defaultConfig.backup.consistency,
+                mode: 'no-lock',
+                protectDdl: false,
+              },
+            },
+          },
+          { outputDirectory: './no-lock-final' },
+        ),
         environment: {
           PATH: `${cwd}${delimiter}${dirname(process.execPath)}`,
           PORTEAU_FIXTURE_INVOCATION: invocation,
@@ -159,7 +176,7 @@ describe('safe backup service', () => {
           }
         },
       }),
-    ).resolves.toEqual({ outputDirectory: join(cwd, 'no-lock-final'), warnings: 0 })
+    ).resolves.toEqual({ outputDirectory: expected, warnings: 0 })
     const args = JSON.parse(await readFile(invocation, 'utf8')) as string[]
     expect(args).toContain('--sync-thread-lock-mode=NO_LOCK')
     expect(args).toContain('--skip-ddl-locks')
@@ -176,18 +193,16 @@ describe('safe backup service', () => {
     directories.push(cwd)
     await symlink(fixture, join(cwd, 'mydumper'))
     await symlink(fixture, join(cwd, 'myloader'))
-    const config = backupConfig('./rejected')
+    const expected = defaultOutput(cwd, './rejected')
     await expect(
       runBackup({
-        config,
-        configDirectory: cwd,
+        ...backupOptions(cwd, './rejected'),
         environment: {
           PATH: `${cwd}${delimiter}${dirname(process.execPath)}`,
           ...fixtureEnvironment,
         },
-        connectionFactory: async () => connection(),
       }),
     ).rejects.toThrow()
-    await expect(lstat(join(cwd, 'rejected'))).rejects.toThrow()
+    await expect(lstat(expected)).rejects.toThrow()
   })
 })

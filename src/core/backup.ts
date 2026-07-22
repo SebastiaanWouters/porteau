@@ -1,13 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, rename, rm, rmdir } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { defaultServer, selectedMysqlDatabases, type PorteauConfig } from './config.js'
 import { createCredentialsDefaultsFile } from './credentials.js'
 import type { ConnectionFactory } from './database.js'
 import type { EngineEvent } from './events.js'
 import { assertArtifactSafeIdentifiers, exactTableRegex, resolveObjectScopes } from './filters.js'
 import { runMachineTool } from './mydumper.js'
 import { runBackupPreflight } from './preflight.js'
+import {
+  defaultBackupOutputDirectory,
+  mysqlDatabaseNames,
+  type ConnectionCredentials,
+  type ResolvedBackupSettings,
+  type ResolvedRun,
+} from './runtime-config.js'
 import { assertMatchingToolVersions, inspectTool, resolveTool } from './tools.js'
 import { verifyMydumperArtifact } from './artifact.js'
 
@@ -21,11 +27,10 @@ export interface BackupResult {
 }
 
 export interface RunBackupOptions {
-  readonly config: PorteauConfig
+  readonly run: ResolvedRun
+  readonly credentials: ConnectionCredentials
   readonly configDirectory?: string
   readonly outputDirectory?: string
-  /** Catalog keys or MySQL names; defaults to `defaults.database` when omitted. */
-  readonly databases?: readonly string[]
   readonly signal?: AbortSignal
   readonly onEvent?: (event: EngineEvent) => void
   readonly connectionFactory?: ConnectionFactory
@@ -68,20 +73,21 @@ class AutoConsistencyLifecycle {
   }
 }
 
-function outputPath(config: PorteauConfig, override: string | undefined, cwd: string): string {
-  const configured = override ?? config.artifacts.directory
-  const expanded = configured.replaceAll('{{date}}', new Date().toISOString().slice(0, 10))
+function outputPath(run: ResolvedRun, override: string | undefined, cwd: string): string {
+  const utcDate = new Date().toISOString().slice(0, 10)
+  if (override === undefined) return defaultBackupOutputDirectory(run, utcDate)
+  const expanded = override.replaceAll('{{date}}', utcDate)
   return resolve(cwd, expanded)
 }
 
-function syncThreadLockMode(mode: PorteauConfig['backup']['consistency']['mode']): string {
+function syncThreadLockMode(mode: ResolvedBackupSettings['consistency']['mode']): string {
   if (mode === 'auto') return 'AUTO'
   if (mode === 'safe-no-lock') return 'SAFE_NO_LOCK'
   return 'NO_LOCK'
 }
 
 function backupArguments(
-  config: PorteauConfig,
+  run: ResolvedRun,
   mysqlDatabases: readonly string[],
   defaultsFile: string,
   temporaryDirectory: string,
@@ -93,34 +99,30 @@ function backupArguments(
     `--outputdir=${temporaryDirectory}`,
     `--database=${mysqlDatabases.join(',')}`,
     `--regex=${exactTableRegex(selectedTables)}`,
-    `--threads=${config.backup.threads}`,
+    `--threads=${run.backup.threads}`,
     `--max-threads-per-table=${MAX_THREADS_PER_TABLE}`,
-    `--sync-thread-lock-mode=${syncThreadLockMode(config.backup.consistency.mode)}`,
+    `--sync-thread-lock-mode=${syncThreadLockMode(run.backup.consistency.mode)}`,
     '--trx-tables',
     `--ftwrl-max-wait-time=${STARTUP_LOCK_TIMEOUT_SECONDS}`,
     `--ftwrl-timeout-retries=${FTWRL_TIMEOUT_RETRIES}`,
   ]
-  if (config.backup.compression !== 'none') args.push(`--compress=${config.backup.compression}`)
-  if (!config.backup.consistency.protectDdl) args.push('--skip-ddl-locks')
-  if (config.objects.triggers) args.push('--triggers')
-  if (!config.objects.views) args.push('--no-views')
+  if (run.backup.compression !== 'none') args.push(`--compress=${run.backup.compression}`)
+  if (!run.backup.consistency.protectDdl) args.push('--skip-ddl-locks')
+  if (run.objects.triggers) args.push('--triggers')
+  if (!run.objects.views) args.push('--no-views')
   // SHOW GLOBAL STATUS for throttle needs PROCESS; no-lock targets users without it.
-  if (config.backup.throttle.enabled && config.backup.consistency.mode !== 'no-lock') {
-    const threshold = config.backup.throttle.threshold ?? Math.max(4, config.backup.threads)
+  if (run.backup.throttle.enabled && run.backup.consistency.mode !== 'no-lock') {
+    const threshold = run.backup.throttle.threshold ?? Math.max(4, run.backup.threads)
     args.push(`--throttle=Threads_running=${threshold}`)
   }
   // NO_LOCK still probes binlog coordinates; tolerate missing REPLICATION CLIENT.
-  if (config.backup.consistency.mode === 'no-lock') args.push('--ignore-errors=1227')
+  if (run.backup.consistency.mode === 'no-lock') args.push('--ignore-errors=1227')
   return args
 }
 
 export async function runBackup(options: RunBackupOptions): Promise<BackupResult> {
-  const { config } = options
-  const server = defaultServer(config)
-  const mysqlDatabases = selectedMysqlDatabases(config, options.databases)
-  if (!server.user || server.password === undefined)
-    throw new Error('Non-interactive backup requires a database user and password')
-  if (mysqlDatabases.length === 0) throw new Error('Backup requires at least one included database')
+  const { run, credentials } = options
+  const mysqlDatabases = mysqlDatabaseNames(run)
 
   const cwd = options.configDirectory ?? process.cwd()
   const environment = options.environment ?? process.env
@@ -128,13 +130,13 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
   delete childEnvironment.PORTEAU_PASSWORD
   const mydumperPath = await resolveTool('mydumper', {
     env: environment,
-    ...(config.tools.mydumper ? { configPath: config.tools.mydumper } : {}),
+    ...(run.tools.mydumper ? { configPath: run.tools.mydumper } : {}),
     cwd,
     ...(options.signal ? { signal: options.signal } : {}),
   })
   const myloaderPath = await resolveTool('myloader', {
     env: environment,
-    ...(config.tools.myloader ? { configPath: config.tools.myloader } : {}),
+    ...(run.tools.myloader ? { configPath: run.tools.myloader } : {}),
     cwd,
     ...(options.signal ? { signal: options.signal } : {}),
   })
@@ -147,19 +149,27 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
 
   const patterns = mysqlDatabases.map((database) => `${database}.*`)
   const preflight = await runBackupPreflight({
-    config,
+    connection: {
+      host: run.server.host,
+      port: run.server.port,
+      user: credentials.user,
+      password: credentials.password,
+      tls: run.server.tls,
+    },
     databases: mysqlDatabases,
     tablePatterns: patterns,
-    includeViews: config.objects.views,
-    profile: config.backup.profile,
+    includeViews: run.objects.views,
+    includeTriggers: run.objects.triggers,
+    profile: run.backup.profile,
+    consistencyMode: run.backup.consistency.mode,
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.connectionFactory ? { connectionFactory: options.connectionFactory } : {}),
   })
-  const selected = resolveObjectScopes(preflight.tables, config.exclude)
+  const selected = resolveObjectScopes(preflight.tables, run.exclude)
   if (selected.length === 0) throw new Error('Backup filters excluded every selected table')
   assertArtifactSafeIdentifiers(selected)
 
-  const finalDirectory = outputPath(config, options.outputDirectory, cwd)
+  const finalDirectory = outputPath(run, options.outputDirectory, cwd)
   if (await pathExists(finalDirectory))
     throw new Error(`Backup output already exists: ${finalDirectory}`)
   await mkdir(dirname(finalDirectory), { recursive: true })
@@ -167,13 +177,13 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
     dirname(finalDirectory),
     `.${basename(finalDirectory)}.porteau-${randomUUID()}.partial`,
   )
-  const credentials = await createCredentialsDefaultsFile(
+  const credentialsFile = await createCredentialsDefaultsFile(
     {
-      host: server.host,
-      port: server.port,
-      user: server.user,
-      password: server.password,
-      tls: server.tls,
+      host: run.server.host,
+      port: run.server.port,
+      user: credentials.user,
+      password: credentials.password,
+      tls: run.server.tls,
     },
     selected,
   )
@@ -188,7 +198,7 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
   let published = false
   const events: EngineEvent[] = []
   const lifecycle =
-    config.backup.consistency.mode === 'auto' ? new AutoConsistencyLifecycle() : undefined
+    run.backup.consistency.mode === 'auto' ? new AutoConsistencyLifecycle() : undefined
   let result: BackupResult | undefined
   let failure: unknown
   let cleanupFailure: AggregateError | undefined
@@ -196,7 +206,13 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
   try {
     const outcome = await runMachineTool({
       executable: mydumperPath,
-      args: backupArguments(config, mysqlDatabases, credentials.path, temporaryDirectory, selected),
+      args: backupArguments(
+        run,
+        mysqlDatabases,
+        credentialsFile.path,
+        temporaryDirectory,
+        selected,
+      ),
       tool: 'mydumper',
       signal: lockController.signal,
       env: childEnvironment,
@@ -248,7 +264,7 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
     if (!Number.isSafeInteger(expectedFiles))
       throw new Error('Mydumper reported an invalid file count')
     await verifyMydumperArtifact(temporaryDirectory, selected, {
-      triggers: config.objects.triggers,
+      triggers: run.objects.triggers,
       signal: lockController.signal,
       expectedFiles,
     })
@@ -271,7 +287,7 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
     if (lockTimer) clearTimeout(lockTimer)
     options.signal?.removeEventListener('abort', forwardAbort)
     const cleanup = await Promise.allSettled([
-      credentials.cleanup(),
+      credentialsFile.cleanup(),
       rm(temporaryDirectory, { recursive: true, force: true }),
       finalReserved && !published ? rmdir(finalDirectory) : Promise.resolve(),
     ])

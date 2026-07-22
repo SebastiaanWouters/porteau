@@ -1,4 +1,4 @@
-import { defaultServer, type PorteauConfig } from './config.js'
+import { defaultServer, type PorteauConfig, type ServerConfig } from './config.js'
 import {
   connectionOptions,
   mysqlConnectionFactory,
@@ -9,6 +9,7 @@ import {
 import { expandTablePatterns } from './filters.js'
 
 type ExecutionProfile = 'production' | 'replica' | 'expert'
+type ConsistencyMode = 'auto' | 'safe-no-lock' | 'no-lock'
 
 export type ServerProduct = 'mysql' | 'mariadb'
 export interface CatalogTable {
@@ -38,12 +39,24 @@ export interface PreflightReport {
   readonly variables: { readonly gtidMode: string; readonly logBin: boolean }
   readonly replica?: ReplicaStatus
 }
+
+/** Connection slice for backup preflight; no authored config bag. */
+export interface PreflightConnection {
+  readonly host: string
+  readonly port: number
+  readonly user?: string
+  readonly password?: string
+  readonly tls: ServerConfig['tls']
+}
+
 export interface PreflightRequest {
-  readonly config: PorteauConfig
+  readonly connection: PreflightConnection
   readonly databases: readonly string[]
   readonly tablePatterns: readonly string[]
   readonly includeViews?: boolean
-  readonly profile?: ExecutionProfile
+  readonly includeTriggers?: boolean
+  readonly profile: ExecutionProfile
+  readonly consistencyMode: ConsistencyMode
   readonly timeoutMilliseconds?: number
   readonly signal?: AbortSignal
   readonly connectionFactory?: ConnectionFactory
@@ -208,13 +221,11 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
   if (request.databases.length === 0 || request.tablePatterns.length === 0)
     throw new Error('Backup preflight requires selected databases and table patterns')
   const timeoutMilliseconds = request.timeoutMilliseconds ?? 10_000
-  const profile = request.profile ?? request.config.backup.profile
+  const profile = request.profile
   const factory = request.connectionFactory ?? mysqlConnectionFactory
   let connection
   try {
-    connection = await factory(
-      connectionOptions(defaultServer(request.config), timeoutMilliseconds),
-    )
+    connection = await factory(connectionOptions(request.connection, timeoutMilliseconds))
     const query = (sql: string, values?: readonly unknown[]) =>
       queryWithDeadline(connection!, sql, values, {
         timeoutMilliseconds,
@@ -279,7 +290,7 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
         )
       )
     }
-    const consistencyMode = request.config.backup.consistency.mode
+    const consistencyMode = request.consistencyMode
     const usesLockStrategy = consistencyMode === 'auto'
     const globalRequired =
       consistencyMode === 'auto'
@@ -293,8 +304,8 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
       globalRequired.push('REPLICATION CLIENT')
     const dataRequired = ['SELECT']
     if (product === 'mariadb' && usesLockStrategy) dataRequired.push('LOCK TABLES')
-    if (request.config.objects.views) dataRequired.push('SHOW VIEW')
-    if (request.config.objects.triggers) dataRequired.push('TRIGGER')
+    if (request.includeViews !== false) dataRequired.push('SHOW VIEW')
+    if (request.includeTriggers !== false) dataRequired.push('TRIGGER')
     const absent = [
       ...globalRequired.filter((privilege) => !has(privilege)),
       ...dataRequired.filter((privilege) =>
