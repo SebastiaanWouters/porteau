@@ -291,6 +291,34 @@ describe('read-only backup preflight', () => {
     ).resolves.toHaveProperty('report.tables')
   })
 
+  it('matches escaped wildcard characters in database grant scopes', async () => {
+    const state = fake({
+      databases: [{ databaseName: 'scone_preview' }],
+      tables: [
+        {
+          databaseName: 'scone_preview',
+          tableName: 'users',
+          tableType: 'BASE TABLE',
+          engine: 'InnoDB',
+          hasKey: 1,
+        },
+      ],
+      grants: [
+        { grant: 'GRANT REPLICATION CLIENT ON *.* TO user' },
+        { grant: 'GRANT ALL PRIVILEGES ON `scone\\_preview`.* TO user' },
+      ],
+    })
+
+    await expect(
+      runBackupPreflight({
+        config: safeNoLockConfig(),
+        databases: ['scone_preview'],
+        tablePatterns: ['scone_preview.*'],
+        connectionFactory: async () => state.connection,
+      }),
+    ).resolves.toHaveProperty('tables')
+  })
+
   it.each(['SELECT', 'SHOW VIEW', 'TRIGGER'])(
     'subtracts a database-scoped partial revoke of %s from global backup privileges',
     async (privilege) => {
@@ -521,6 +549,23 @@ describe('destination restore preflight', () => {
         overwritePolicy: 'reject',
         binlogPolicy: 'disable',
         connectionFactory: async () => wholeDatabase.connection,
+      }),
+    ).resolves.toMatchObject({ destination: { objects: 0 } })
+  })
+
+  it('accepts an escaped database name in a restore grant scope', async () => {
+    const state = destination(0, true, {
+      grants: [{ grant: 'GRANT ALL PRIVILEGES ON `scone\\_preview`.* TO restore' }],
+    })
+
+    await expect(
+      runRestorePreflight({
+        config,
+        destinationDatabase: 'scone_preview',
+        destinationPolicy: 'require-empty',
+        overwritePolicy: 'reject',
+        binlogPolicy: 'disable',
+        connectionFactory: async () => state.connection,
       }),
     ).resolves.toMatchObject({ destination: { objects: 0 } })
   })

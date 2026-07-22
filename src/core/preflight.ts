@@ -110,6 +110,28 @@ interface Grant {
   readonly database?: string
   readonly revoked?: boolean
 }
+function databaseFromGrantScope(scope: string): string {
+  const quotedDatabase = scope.slice(1, -3)
+  let database = ''
+  for (let index = 0; index < quotedDatabase.length; index += 1) {
+    const character = quotedDatabase[index]!
+    const nextCharacter = quotedDatabase[index + 1]
+    if (character === '`' && quotedDatabase[index + 1] === '`') {
+      database += '`'
+      index += 1
+    } else if (
+      character === '\\' &&
+      nextCharacter !== undefined &&
+      ['\\', '%', '_'].includes(nextCharacter)
+    ) {
+      database += nextCharacter
+      index += 1
+    } else {
+      database += character
+    }
+  }
+  return database
+}
 const mysql84AllStaticPrivileges = new Set([
   'SELECT',
   'INSERT',
@@ -155,7 +177,7 @@ function parseGrants(rows: readonly unknown[]): Grant[] {
       const scope = match[3]!
       grants.push({
         privileges: new Set(privileges),
-        ...(scope === '*.*' ? {} : { database: scope.slice(1, -3).replaceAll('``', '`') }),
+        ...(scope === '*.*' ? {} : { database: databaseFromGrantScope(scope) }),
         ...(match[1]!.toUpperCase() === 'REVOKE' ? { revoked: true } : {}),
       })
     }
