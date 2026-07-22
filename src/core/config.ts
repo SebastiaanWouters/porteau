@@ -21,18 +21,13 @@ const configSchema = v.pipe(
       directory: v.string(),
       profile: v.picklist(['production', 'replica', 'expert']),
       threads: v.pipe(v.number(), v.integer(), v.minValue(2)),
-      maxThreadsPerTable: v.pipe(v.number(), v.integer(), v.minValue(1)),
       compression: v.picklist(['none', 'gzip', 'zstd']),
       consistency: v.strictObject({
         mode: v.picklist(['auto', 'safe-no-lock', 'no-lock']),
-        requireInnoDB: v.boolean(),
         protectDdl: v.boolean(),
-        startupLockTimeoutSeconds: v.pipe(v.number(), v.minValue(1)),
-        lockRetries: v.pipe(v.number(), v.integer(), v.minValue(0)),
       }),
       throttle: v.strictObject({
         enabled: v.boolean(),
-        variable: v.literal('Threads_running'),
         threshold: v.nullable(v.pipe(v.number(), v.integer(), v.minValue(1))),
       }),
     }),
@@ -41,8 +36,6 @@ const configSchema = v.pipe(
       destinationPolicy: v.picklist(['require-empty', 'allow-existing']),
       overwritePolicy: v.picklist(['reject', 'drop', 'truncate', 'delete']),
       binlogPolicy: v.picklist(['disable', 'enable']),
-      verifyChecksums: v.picklist(['off', 'warn', 'required']),
-      deferIndexes: v.picklist(['off', 'per-table', 'all']),
     }),
     include: v.strictObject({ databases: v.array(v.string()) }),
     exclude: v.strictObject({
@@ -52,13 +45,10 @@ const configSchema = v.pipe(
     objects: v.strictObject({
       triggers: v.boolean(),
       views: v.boolean(),
-      routines: v.boolean(),
-      events: v.boolean(),
     }),
   }),
   v.check(({ backup }) => {
-    const { mode, requireInnoDB, protectDdl } = backup.consistency
-    if (!requireInnoDB) return false
+    const { mode, protectDdl } = backup.consistency
     if (mode === 'auto') return protectDdl
     if (mode === 'no-lock') return !protectDdl
     return backup.profile === 'expert' && !protectDdl
@@ -79,28 +69,22 @@ export const defaultConfig = {
     directory: './backups/{{date}}',
     profile: 'production',
     threads: 4,
-    maxThreadsPerTable: 4,
     compression: 'zstd',
     consistency: {
       mode: 'auto',
-      requireInnoDB: true,
       protectDdl: true,
-      startupLockTimeoutSeconds: 10,
-      lockRetries: 0,
     },
-    throttle: { enabled: true, variable: 'Threads_running', threshold: null },
+    throttle: { enabled: true, threshold: null },
   },
   restore: {
     threads: 4,
     destinationPolicy: 'require-empty',
     overwritePolicy: 'reject',
     binlogPolicy: 'disable',
-    verifyChecksums: 'warn',
-    deferIndexes: 'per-table',
   },
   include: { databases: [] },
   exclude: { tables: [], data: [] },
-  objects: { triggers: true, views: true, routines: false, events: false },
+  objects: { triggers: true, views: true },
 } as const satisfies ConfigInput
 
 export interface LoadConfigOptions {

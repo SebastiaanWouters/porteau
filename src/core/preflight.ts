@@ -251,7 +251,7 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
     const unsafe = tables.filter(
       (table) => table.kind === 'base-table' && table.engine?.toUpperCase() !== 'INNODB',
     )
-    if (request.config.backup.consistency.requireInnoDB && unsafe.length > 0)
+    if (unsafe.length > 0)
       throw new Error(
         `Selected non-InnoDB base tables are unsafe: ${unsafe.map((t) => `${t.database}.${t.table}`).join(', ')}`,
       )
@@ -293,7 +293,6 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
     if (product === 'mariadb' && usesLockStrategy) dataRequired.push('LOCK TABLES')
     if (request.config.objects.views) dataRequired.push('SHOW VIEW')
     if (request.config.objects.triggers) dataRequired.push('TRIGGER')
-    if (request.config.objects.events) dataRequired.push('EVENT')
     const absent = [
       ...globalRequired.filter((privilege) => !has(privilege)),
       ...dataRequired.filter((privilege) =>

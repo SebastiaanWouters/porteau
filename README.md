@@ -48,7 +48,6 @@ Default backups use mydumper's lock-based consistency strategy and need global p
 backup:
   consistency:
     mode: no-lock
-    requireInnoDB: true
     protectDdl: false
 ```
 

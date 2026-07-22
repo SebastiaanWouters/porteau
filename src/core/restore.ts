@@ -60,12 +60,6 @@ function restoreArguments(
     truncate: 'TRUNCATE',
     delete: 'DELETE',
   } as const
-  const checksum = { off: 'SKIP', warn: 'WARN', required: 'FAIL' } as const
-  const indexes = {
-    off: 'SKIP',
-    'per-table': 'AFTER_IMPORT_PER_TABLE',
-    all: 'AFTER_IMPORT_ALL_TABLES',
-  } as const
   return [
     `--defaults-file=${defaultsFile}`,
     '--machine-log-json',
@@ -74,8 +68,8 @@ function restoreArguments(
     `--database=${request.destinationDatabase}`,
     `--threads=${config.restore.threads}`,
     `--drop-table=${overwrite[request.overwritePolicy]}`,
-    `--checksum=${checksum[config.restore.verifyChecksums]}`,
-    `--optimize-keys=${indexes[config.restore.deferIndexes]}`,
+    '--checksum=WARN',
+    '--optimize-keys=AFTER_IMPORT_PER_TABLE',
     ...(preflight.destination.exists ? ['--skip-create-database'] : []),
     ...(request.binlogPolicy === 'enable' ? ['--enable-binlog'] : []),
   ]

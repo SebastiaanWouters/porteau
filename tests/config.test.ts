@@ -162,11 +162,10 @@ describe('configuration contract', () => {
 
   it.each([
     { profile: 'production', consistency: { mode: 'safe-no-lock' } },
-    { profile: 'replica', consistency: { requireInnoDB: false } },
     { profile: 'production', consistency: { protectDdl: false } },
     {
       profile: 'production',
-      consistency: { mode: 'no-lock', requireInnoDB: true, protectDdl: true },
+      consistency: { mode: 'no-lock', protectDdl: true },
     },
   ])('rejects unqualified consistency configurations', async (backup) => {
     await expect(
@@ -181,7 +180,7 @@ describe('configuration contract', () => {
       flags: {
         backup: {
           profile: 'expert',
-          consistency: { mode: 'safe-no-lock', requireInnoDB: true, protectDdl: false },
+          consistency: { mode: 'safe-no-lock', protectDdl: false },
         },
       },
     })
@@ -195,13 +194,25 @@ describe('configuration contract', () => {
       env: {},
       flags: {
         backup: {
-          consistency: { mode: 'no-lock', requireInnoDB: true, protectDdl: false },
+          consistency: { mode: 'no-lock', protectDdl: false },
         },
       },
     })
 
     expect(config.backup.consistency.mode).toBe('no-lock')
     expect(config.backup.profile).toBe('production')
+  })
+
+  it.each([
+    { backup: { consistency: { requireInnoDB: true } } },
+    { backup: { throttle: { variable: 'Threads_running' } } },
+    { objects: { routines: false } },
+    { backup: { maxThreadsPerTable: 4 } },
+    { restore: { verifyChecksums: 'warn' } },
+  ])('rejects removed public keys as unknown %#', async (flags) => {
+    await expect(loadConfig({ cwd: await createWorkspace(), env: {}, flags })).rejects.toThrow(
+      /unknown key/,
+    )
   })
 
   it.each(['verify-ca', 'verify-identity'])(

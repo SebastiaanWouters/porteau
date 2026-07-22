@@ -11,6 +11,10 @@ import { runBackupPreflight } from './preflight.js'
 import { assertMatchingToolVersions, inspectTool, resolveTool } from './tools.js'
 import { verifyMydumperArtifact } from './artifact.js'
 
+const MAX_THREADS_PER_TABLE = 4
+const STARTUP_LOCK_TIMEOUT_SECONDS = 10
+const FTWRL_TIMEOUT_RETRIES = 1
+
 export interface BackupResult {
   readonly outputDirectory: string
   readonly warnings: number
@@ -87,11 +91,11 @@ function backupArguments(
     `--database=${config.include.databases.join(',')}`,
     `--regex=${exactTableRegex(selectedTables)}`,
     `--threads=${config.backup.threads}`,
-    `--max-threads-per-table=${config.backup.maxThreadsPerTable}`,
+    `--max-threads-per-table=${MAX_THREADS_PER_TABLE}`,
     `--sync-thread-lock-mode=${syncThreadLockMode(config.backup.consistency.mode)}`,
     '--trx-tables',
-    `--ftwrl-max-wait-time=${config.backup.consistency.startupLockTimeoutSeconds}`,
-    `--ftwrl-timeout-retries=${Math.max(1, config.backup.consistency.lockRetries + 1)}`,
+    `--ftwrl-max-wait-time=${STARTUP_LOCK_TIMEOUT_SECONDS}`,
+    `--ftwrl-timeout-retries=${FTWRL_TIMEOUT_RETRIES}`,
   ]
   if (config.backup.compression !== 'none') args.push(`--compress=${config.backup.compression}`)
   if (!config.backup.consistency.protectDdl) args.push('--skip-ddl-locks')
@@ -113,8 +117,6 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
     throw new Error('Non-interactive backup requires a database user and password')
   if (config.include.databases.length === 0)
     throw new Error('Backup requires at least one included database')
-  if (config.objects.routines || config.objects.events)
-    throw new Error('Routine and event backup requires a future qualified object catalog')
 
   const cwd = options.configDirectory ?? process.cwd()
   const environment = options.environment ?? process.env
@@ -206,7 +208,7 @@ export async function runBackup(options: RunBackupOptions): Promise<BackupResult
           lockTimer = setTimeout(() => {
             lockTimedOut = true
             lockController.abort()
-          }, config.backup.consistency.startupLockTimeoutSeconds * 1_000)
+          }, STARTUP_LOCK_TIMEOUT_SECONDS * 1_000)
         }
         if (lockTimer && event.sourceEvent === 'table_unlock' && event.sourceStatus === 'finished')
           unlockReported = true

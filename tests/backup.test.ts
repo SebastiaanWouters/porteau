@@ -90,7 +90,6 @@ describe('safe backup service', () => {
         ...defaultConfig.backup,
         directory: './never-finalized',
         compression: 'none',
-        consistency: { ...defaultConfig.backup.consistency, startupLockTimeoutSeconds: 1 },
       },
     } as PorteauConfig
 
@@ -106,7 +105,7 @@ describe('safe backup service', () => {
       }),
     ).rejects.toThrow(/safety budget/)
     await expect(lstat(join(cwd, 'never-finalized'))).rejects.toThrow()
-  })
+  }, 20_000)
 
   it('invokes mydumper NO_LOCK without throttle for no-lock mode', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'porteau-no-lock-'))
