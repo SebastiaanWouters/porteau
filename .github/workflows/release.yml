@@ -61,7 +61,6 @@ jobs:
     needs: [package-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    environment: npm-release
     permissions:
       contents: read
       id-token: write
