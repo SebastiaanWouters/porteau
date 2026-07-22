@@ -6,8 +6,9 @@ import {
   sanitizeDatabaseError,
   type ConnectionFactory,
 } from './database.js'
-import type { ExecutionProfile } from './engine.js'
 import { expandTablePatterns } from './filters.js'
+
+type ExecutionProfile = 'production' | 'replica' | 'expert'
 
 export type ServerProduct = 'mysql' | 'mariadb'
 export interface CatalogTable {
@@ -336,12 +337,6 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
 export async function runRestorePreflight(
   request: RestorePreflightRequest,
 ): Promise<RestorePreflightReport> {
-  if (!['require-empty', 'allow-existing'].includes(request.destinationPolicy))
-    throw new Error('Restore requires an explicit destination policy')
-  if (!['reject', 'drop', 'truncate', 'delete'].includes(request.overwritePolicy))
-    throw new Error('Restore requires an explicit overwrite policy')
-  if (!['disable', 'enable'].includes(request.binlogPolicy))
-    throw new Error('Restore requires an explicit binlog policy')
   if (request.destinationDatabase === '' || request.destinationDatabase.includes('\0'))
     throw new Error('Restore requires a valid destination database')
   if (

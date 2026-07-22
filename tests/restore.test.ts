@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vite-plus/test'
 import { defaultConfig, type PorteauConfig } from '../src/core/config.js'
 import type { QueryConnection } from '../src/core/database.js'
-import type { RestoreRequest } from '../src/core/engine.js'
+import type { RestoreRequest } from '../src/core/restore.js'
 import { runRestore } from '../src/core/restore.js'
 
 const fixture = fileURLToPath(new URL('./fixtures/subprocess.mjs', import.meta.url))
@@ -75,6 +75,16 @@ function environment(cwd: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
 }
 
 describe('guarded restore service', () => {
+  it('rejects an empty source database before inspecting the artifact', async () => {
+    await expect(
+      runRestore({
+        config: config(),
+        request: request('/unused', { sourceDatabase: '' }),
+        confirm: () => true,
+      }),
+    ).rejects.toThrow('Restore requires explicit source and destination databases')
+  })
+
   it('verifies, preflights, confirms, uses protected flags, and requires completion agreement', async () => {
     const { cwd, artifact } = await workspace()
     const invocation = join(cwd, 'invocation.json')

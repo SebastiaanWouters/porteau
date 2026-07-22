@@ -52,6 +52,9 @@ export-*/
 # Local agent / sync state
 .amp/
 
+# Local planning documents
+docs/plans/
+
 # Editor settings
 .idea/
 .vscode/*

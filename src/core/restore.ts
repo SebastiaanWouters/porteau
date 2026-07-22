@@ -1,12 +1,20 @@
 import type { PorteauConfig } from './config.js'
 import { createCredentialsDefaultsFile } from './credentials.js'
 import type { ConnectionFactory } from './database.js'
-import type { RestoreRequest } from './engine.js'
 import type { EngineEvent } from './events.js'
 import { runMachineTool } from './mydumper.js'
 import { runRestorePreflight, type RestorePreflightReport } from './preflight.js'
 import { assertMatchingToolVersions, inspectTool, resolveTool } from './tools.js'
 import { verifyRestoreArtifact } from './artifact.js'
+
+export interface RestoreRequest {
+  readonly artifactPath: string
+  readonly sourceDatabase: string
+  readonly destinationDatabase: string
+  readonly destinationPolicy: 'require-empty' | 'allow-existing'
+  readonly overwritePolicy: 'reject' | 'drop' | 'truncate' | 'delete'
+  readonly binlogPolicy: 'disable' | 'enable'
+}
 
 export interface RestoreConfirmation {
   readonly host: string
@@ -97,14 +105,6 @@ export async function runRestore(options: RunRestoreOptions): Promise<RestoreRes
     throw new Error('Non-interactive restore requires a database user and password')
   if (request.sourceDatabase === '' || request.destinationDatabase === '')
     throw new Error('Restore requires explicit source and destination databases')
-  if (!['require-empty', 'allow-existing'].includes(request.destinationPolicy))
-    throw new Error('Restore requires an explicit destination policy')
-  if (!['reject', 'drop', 'truncate', 'delete'].includes(request.overwritePolicy))
-    throw new Error('Restore requires an explicit overwrite policy')
-  if (!['disable', 'enable'].includes(request.binlogPolicy))
-    throw new Error('Restore requires an explicit binlog policy')
-  if (request.overwritePolicy !== 'reject' && request.destinationPolicy !== 'allow-existing')
-    throw new Error('Destructive overwrite requires the allow-existing destination policy')
 
   const cwd = options.configDirectory ?? process.cwd()
   const environment = options.environment ?? process.env

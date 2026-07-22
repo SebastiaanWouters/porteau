@@ -5,7 +5,6 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
   },
   fmt: {
-    ignorePatterns: ['PLAN.md'],
     semi: false,
     singleQuote: true,
     sortPackageJson: false,

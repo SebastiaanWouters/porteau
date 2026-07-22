@@ -15,7 +15,7 @@ import {
   resolveObjectScopes,
   serializeDefaultsSection,
 } from '../src/core/filters.js'
-import { compareToolVersions } from '../src/core/tool-version.js'
+import { compareToolVersions, semverTripleAtLeast } from '../src/core/tool-version.js'
 import { isSupportedToolVersion, parseToolVersion, resolveTool } from '../src/core/tools.js'
 
 const temporaryDirectories: string[] = []
@@ -85,6 +85,14 @@ describe('native tool resolution', () => {
     expect(compareToolVersions('1.0.3-999999999999999999999999', '1.0.3-4')).toBe(1)
     expect(compareToolVersions('01.000.0003-0001', '1.0.3-1')).toBe(0)
     expect(compareToolVersions('invalid', '1.0.3-1')).toBeUndefined()
+  })
+
+  it('compares strict semantic-version triples without numeric precision loss', () => {
+    expect(semverTripleAtLeast('22.18.0', '22.18.0')).toBe(true)
+    expect(semverTripleAtLeast('22.17.999999999999999999999999', '22.18.0')).toBe(false)
+    expect(semverTripleAtLeast('999999999999999999999999.0.0', '24.0.0')).toBe(true)
+    expect(semverTripleAtLeast('22.18.0-rc.1', '22.18.0')).toBe(false)
+    expect(semverTripleAtLeast('22.18.0garbage', '22.18.0')).toBe(false)
   })
 })
 

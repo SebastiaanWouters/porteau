@@ -11,6 +11,7 @@ import {
   type ToolName,
   type ToolResolutionSource,
 } from '../core/tools.js'
+import { semverTripleAtLeast } from '../core/tool-version.js'
 import { compatibilityManifest } from './manifest.js'
 import { minimumNodeVersion, supportedTargetDescription } from './policy.js'
 
@@ -93,21 +94,6 @@ function parseOsRelease(contents: string): Record<string, string> {
 function debianArchitecture(architecture: string): string {
   if (architecture === 'x64') return 'amd64'
   return architecture
-}
-
-function versionAtLeast(actual: string, minimum: string): boolean {
-  const parse = (value: string) => {
-    const match = /^v?(\d+)\.(\d+)\.(\d+)$/u.exec(value)
-    return match ? match.slice(1).map(Number) : undefined
-  }
-  const actualParts = parse(actual)
-  const minimumParts = parse(minimum)
-  if (!actualParts || !minimumParts) return false
-  for (let index = 0; index < 3; index += 1) {
-    if (actualParts[index]! > minimumParts[index]!) return true
-    if (actualParts[index]! < minimumParts[index]!) return false
-  }
-  return true
 }
 
 async function diagnoseSystem(options: DiagnosticsOptions): Promise<SystemDiagnostic> {
@@ -259,7 +245,7 @@ async function diagnoseTool(name: ToolName, options: DiagnosticsOptions): Promis
 export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<DiagnosticsResult> {
   options.signal?.throwIfAborted()
   const nodeVersion = (options.nodeVersion ?? process.version).replace(/^v/u, '')
-  const nodeSupported = versionAtLeast(nodeVersion, minimumNodeVersion)
+  const nodeSupported = semverTripleAtLeast(nodeVersion, minimumNodeVersion)
   const [system, mydumper, myloader] = await Promise.all([
     diagnoseSystem(options),
     diagnoseTool('mydumper', options),
