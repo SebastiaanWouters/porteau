@@ -255,11 +255,16 @@ export async function runBackupPreflight(request: PreflightRequest): Promise<Pre
         )
       )
     }
-    const globalRequired =
-      product === 'mysql' ? ['RELOAD', 'PROCESS', 'BACKUP_ADMIN'] : ['RELOAD', 'PROCESS']
-    if (profile === 'replica') globalRequired.push('REPLICATION CLIENT')
+    const usesLockStrategy = request.config.backup.consistency.mode === 'auto'
+    const globalRequired = usesLockStrategy
+      ? product === 'mysql'
+        ? ['RELOAD', 'PROCESS', 'BACKUP_ADMIN']
+        : ['RELOAD', 'PROCESS']
+      : ['REPLICATION CLIENT']
+    if (profile === 'replica' && !globalRequired.includes('REPLICATION CLIENT'))
+      globalRequired.push('REPLICATION CLIENT')
     const dataRequired = ['SELECT']
-    if (product === 'mariadb') dataRequired.push('LOCK TABLES')
+    if (product === 'mariadb' && usesLockStrategy) dataRequired.push('LOCK TABLES')
     if (request.config.objects.views) dataRequired.push('SHOW VIEW')
     if (request.config.objects.triggers) dataRequired.push('TRIGGER')
     if (request.config.objects.events) dataRequired.push('EVENT')

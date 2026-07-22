@@ -82,6 +82,21 @@ async function preflight(
   return { report, state }
 }
 
+function safeNoLockConfig(): PorteauConfig {
+  return {
+    ...config,
+    backup: {
+      ...config.backup,
+      profile: 'expert',
+      consistency: {
+        ...config.backup.consistency,
+        mode: 'safe-no-lock',
+        protectDdl: false,
+      },
+    },
+  }
+}
+
 describe('mysql connection boundary', () => {
   it('uses direct fields, bigint-safe values, timeouts, and conservative TLS mappings', () => {
     const options = connectionOptions({
@@ -183,6 +198,64 @@ describe('read-only backup preflight', () => {
         ],
       }),
     ).rejects.toThrow(/non-InnoDB/u)
+  })
+
+  it('accepts safe-no-lock without lock-administration privileges', async () => {
+    const state = fake({
+      grants: [
+        { grant: 'GRANT REPLICATION CLIENT ON *.* TO user' },
+        { grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO user' },
+      ],
+    })
+
+    await expect(
+      runBackupPreflight({
+        config: safeNoLockConfig(),
+        databases: ['app'],
+        tablePatterns: ['app.*'],
+        connectionFactory: async () => state.connection,
+      }),
+    ).resolves.toHaveProperty('tables')
+  })
+
+  it.each(['SELECT', 'SHOW VIEW', 'TRIGGER'])(
+    'still requires %s for safe-no-lock when its corresponding content is enabled',
+    async (missingPrivilege) => {
+      const state = fake({
+        grants: [
+          { grant: 'GRANT REPLICATION CLIENT ON *.* TO user' },
+          {
+            grant: `GRANT ${['SELECT', 'SHOW VIEW', 'TRIGGER']
+              .filter((privilege) => privilege !== missingPrivilege)
+              .join(', ')} ON \`app\`.* TO user`,
+          },
+        ],
+      })
+
+      await expect(
+        runBackupPreflight({
+          config: safeNoLockConfig(),
+          databases: ['app'],
+          tablePatterns: ['app.*'],
+          connectionFactory: async () => state.connection,
+        }),
+      ).rejects.toThrow(new RegExp(missingPrivilege, 'u'))
+    },
+  )
+
+  it('requires REPLICATION CLIENT for safe-no-lock consistency checks', async () => {
+    const state = fake({
+      grants: [{ grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO user' }],
+    })
+
+    await expect(
+      runBackupPreflight({
+        config: safeNoLockConfig(),
+        databases: ['app'],
+        tablePatterns: ['app.*'],
+        connectionFactory: async () => state.connection,
+      }),
+    ).rejects.toThrow(/REPLICATION CLIENT/u)
   })
 
   it('rejects replica profile on a primary and insufficient safe-lock privileges', async () => {

@@ -67,6 +67,9 @@ suite('Porteau against pinned MySQL and mydumper', () => {
       GRANT ALL PRIVILEGES ON *.* TO 'partially_revoked'@'%';
       GRANT BACKUP_ADMIN ON *.* TO 'partially_revoked'@'%';
       REVOKE SELECT ON safe_app.* FROM 'partially_revoked'@'%';
+      CREATE USER 'no_lock_backup'@'%' IDENTIFIED BY 'no-lock-only';
+      GRANT SELECT, SHOW VIEW, TRIGGER ON safe_app.* TO 'no_lock_backup'@'%';
+      GRANT REPLICATION CLIENT ON *.* TO 'no_lock_backup'@'%';
     `)
     await db.end()
   }, 60_000)
@@ -186,6 +189,34 @@ suite('Porteau against pinned MySQL and mydumper', () => {
         confirm: () => true,
       }),
     ).rejects.toThrow(/not empty/u)
+  }, 90_000)
+
+  it('backs up in safe-no-lock mode without global administration privileges', async () => {
+    const output = join(root, 'safe-no-lock')
+    const backupConfig = config('safe_app', output)
+    const noLockConfig: PorteauConfig = {
+      ...backupConfig,
+      connection: {
+        ...backupConfig.connection,
+        user: 'no_lock_backup',
+        password: 'no-lock-only',
+      },
+      backup: {
+        ...backupConfig.backup,
+        profile: 'expert',
+        consistency: {
+          ...backupConfig.backup.consistency,
+          mode: 'safe-no-lock',
+          protectDdl: false,
+        },
+      },
+    }
+
+    await expect(runBackup({ config: noLockConfig })).resolves.toEqual({
+      outputDirectory: output,
+      warnings: expect.any(Number),
+    })
+    expect(await readdir(output)).toContain('safe_app.rows-schema.sql')
   }, 90_000)
 
   it('rejects a selected nontransactional table before creating output', async () => {
