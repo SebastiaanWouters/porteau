@@ -1,4 +1,5 @@
 import { dirname, resolve } from 'node:path'
+import { applyConfigOverlay } from '../core/config.js'
 import { abortError, normalizeList, normalizeRequired } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
@@ -65,11 +66,9 @@ export const backupCommand = defineCommand({
       throw new Error(
         'Backup requires a database user, password, and at least one included database',
       )
-    config = await services.loadConfig({
-      cwd,
-      env,
-      ...(configFile ? { configFile } : {}),
-      flags: { connection: { user, password }, include: { databases } },
+    config = applyConfigOverlay(config, {
+      connection: { user, password },
+      include: { databases },
     })
     signal.throwIfAborted()
     presentation.registerSecret(config.connection.password)

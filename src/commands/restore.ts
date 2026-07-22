@@ -1,4 +1,5 @@
 import { dirname, resolve } from 'node:path'
+import { applyConfigOverlay } from '../core/config.js'
 import type { RestoreConfirmation } from '../core/restore.js'
 import { abortError, normalizeRequired } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
@@ -118,15 +119,7 @@ export const restoreCommand = defineCommand({
     artifact = normalizeRequired(artifact, 'Backup artifact directory')
     sourceDatabase = normalizeRequired(sourceDatabase, 'Source database')
     destinationDatabase = normalizeRequired(destinationDatabase, 'Destination database')
-    config = await services.loadConfig({
-      cwd,
-      env,
-      ...(configFile ? { configFile } : {}),
-      flags: {
-        connection: { user, password },
-        ...(Object.keys(restoreFlags).length ? { restore: restoreFlags } : {}),
-      },
-    })
+    config = applyConfigOverlay(config, { connection: { user, password } })
     signal.throwIfAborted()
     presentation.registerSecret(config.connection.password)
     const result = await services.runRestore({

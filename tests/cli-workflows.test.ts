@@ -237,25 +237,26 @@ describe('guided backup', () => {
         services: {
           loadConfig: async (options) => {
             loads.push(options)
-            return loads.length === 1
-              ? config()
-              : config({
-                  user: 'backup_user',
-                  password: 'prompt-secret',
-                  databases: ['app', 'audit'],
-                })
+            return config()
           },
           runBackup,
         },
       }),
     ).toBe(0)
-    expect(loads.at(-1)).toMatchObject({
-      flags: {
-        connection: { user: 'backup_user', password: 'prompt-secret' },
-        include: { databases: ['app', 'audit'] },
-      },
-    })
+    expect(loads).toHaveLength(1)
+    expect(loads[0]).toMatchObject({ flags: {} })
     expect(runBackup).toHaveBeenCalledOnce()
+    expect(runBackup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          connection: expect.objectContaining({
+            user: 'backup_user',
+            password: 'prompt-secret',
+          }),
+          include: { databases: ['app', 'audit'] },
+        }),
+      }),
+    )
   })
 
   it('cancels before backup when a prompt is cancelled and rejects password argv', async () => {

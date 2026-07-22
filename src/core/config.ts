@@ -151,6 +151,13 @@ function mergeConfig(...sources: Array<ConfigRecord | null | undefined>): Config
   )
 }
 
+export function applyConfigOverlay(
+  base: PorteauConfig,
+  overlay: Record<string, unknown>,
+): PorteauConfig {
+  return validateConfig(mergeConfig(overlay, base as unknown as ConfigRecord))
+}
+
 function configFromEnvironment(env: NodeJS.ProcessEnv): Record<string, unknown> {
   const config: Record<string, unknown> = {}
   const connection: Record<string, unknown> = {}
