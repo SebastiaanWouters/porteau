@@ -227,7 +227,7 @@ describe('read-only setup diagnostics', () => {
     }
   })
 
-  it('runs doctor and setup checks with config-relative paths and strict overrides', async () => {
+  it('runs doctor with config-relative paths and strict overrides', async () => {
     const root = await mkdtemp(join(tmpdir(), 'porteau-diagnostics-'))
     temporaryDirectories.push(root)
     const configDirectory = join(root, 'configuration')
@@ -262,14 +262,8 @@ describe('read-only setup diagnostics', () => {
           stderr: (line) => errors.push(line),
         }),
       ).toBe(0)
-      expect(
-        await executeCli({
-          args: ['setup', '--check', '--config', configFile],
-          stderr: (line) => errors.push(line),
-        }),
-      ).toBe(0)
       expect(output.join('')).toContain(join(binDirectory, 'mydumper'))
-      expect(output.join('').match(/Diagnostics passed\./gu)).toHaveLength(2)
+      expect(output.join('')).toContain('Diagnostics passed.')
 
       const invalidOverride = join(root, 'missing-mydumper')
       process.env.PORTEAU_MYDUMPER = invalidOverride
@@ -283,21 +277,6 @@ describe('read-only setup diagnostics', () => {
       expect(errors.filter((line) => line.startsWith('error:'))).toHaveLength(1)
       delete process.env.PORTEAU_MYDUMPER
 
-      const unsupported = await runDiagnostics({
-        platform: 'darwin',
-        architecture: 'arm64',
-        nodeVersion: '24.0.0',
-        ...toolDependencies(),
-      })
-      expect(
-        await executeCli({
-          args: ['setup'],
-          stderr: (line) => errors.push(line),
-          services: { collectDiagnostics: async () => unsupported },
-        }),
-      ).toBe(1)
-      expect(errors.at(-1)).toContain('Automatic installation is unavailable')
-
       await unlink(join(binDirectory, 'myloader'))
       await writeFile(
         join(binDirectory, 'myloader'),
@@ -306,7 +285,7 @@ describe('read-only setup diagnostics', () => {
       await chmod(join(binDirectory, 'myloader'), 0o700)
       expect(
         await executeCli({
-          args: ['setup', '--check', '--config', configFile],
+          args: ['doctor', '--config', configFile],
           stderr: (line) => errors.push(line),
         }),
       ).toBe(1)

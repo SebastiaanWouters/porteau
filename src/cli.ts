@@ -10,16 +10,9 @@ import { configCommand } from './commands/config.js'
 import { collectDiagnostics, doctorCommand, formatDiagnostics } from './commands/doctor.js'
 import { initCommand } from './commands/init.js'
 import { restoreCommand } from './commands/restore.js'
-import { setupCommand } from './commands/setup.js'
 import { runBackup } from './core/backup.js'
 import { defaultConfig, loadConfig, validateConfig, type PorteauConfig } from './core/config.js'
 import { runRestore, type RestoreConfirmation } from './core/restore.js'
-import {
-  approvedInstall,
-  executeInstallPlan,
-  planUbuntuInstall,
-  renderInstallPlan,
-} from './setup/ubuntu.js'
 import { OutputError, Presentation } from './presentation/context.js'
 import { clackPrompts, type PromptAdapter } from './presentation/prompts.js'
 import type { ProgressFactory } from './presentation/progress.js'
@@ -30,7 +23,6 @@ export const mainCommand = defineCommand({
     backup: backupCommand,
     restore: restoreCommand,
     init: initCommand,
-    setup: setupCommand,
     doctor: doctorCommand,
     config: configCommand,
   },
@@ -39,7 +31,6 @@ const commands = {
   backup: backupCommand,
   restore: restoreCommand,
   init: initCommand,
-  setup: setupCommand,
   doctor: doctorCommand,
   config: configCommand,
 } as const
@@ -51,14 +42,12 @@ async function usage(name?: string): Promise<string> {
       ? renderUsage(restoreCommand, parent)
       : name === 'init'
         ? renderUsage(initCommand, parent)
-        : name === 'setup'
-          ? renderUsage(setupCommand, parent)
-          : name === 'doctor'
-            ? renderUsage(doctorCommand, parent)
-            : name === 'config'
-              ? renderUsage(configCommand, parent)
-              : renderUsage(mainCommand))
-  return `${rendered}\nGLOBAL OPTIONS\n  --json  JSONL output\n  --quiet  Essential output only\n  --verbose  Detailed output\n  --no-interactive  Never prompt\n  --yes  Approve setup or restore mutation`
+        : name === 'doctor'
+          ? renderUsage(doctorCommand, parent)
+          : name === 'config'
+            ? renderUsage(configCommand, parent)
+            : renderUsage(mainCommand))
+  return `${rendered}\nGLOBAL OPTIONS\n  --json  JSONL output\n  --quiet  Essential output only\n  --verbose  Detailed output\n  --no-interactive  Never prompt\n  --yes  Approve restore mutation`
 }
 export interface CliExecutionOptions {
   args?: string[]
@@ -78,14 +67,12 @@ export interface CliServices {
   runBackup: typeof runBackup
   runRestore: typeof runRestore
   collectDiagnostics: typeof collectDiagnostics
-  executeInstallPlan: typeof executeInstallPlan
 }
 const defaultServices: CliServices = {
   loadConfig,
   runBackup,
   runRestore,
   collectDiagnostics,
-  executeInstallPlan,
 }
 class UsageError extends Error {}
 const globalBoolean = new Set(['--json', '--quiet', '--verbose', '--no-interactive', '--yes'])
@@ -426,53 +413,6 @@ export async function executeCli(options: CliExecutionOptions = {}): Promise<num
       await presentation.success(name, formatDiagnostics(result).join('\n'), {
         diagnostics: result,
       })
-      return 0
-    }
-    if (name === 'setup') {
-      if (a.check && parsed.flags.yes)
-        throw new UsageError('--check and --yes cannot be used together')
-      const result = await services.collectDiagnostics({
-        ...(a.config ? { configFile: resolve(cwd, String(a.config)) } : {}),
-        env,
-        cwd,
-        signal: controller.signal,
-        diagnostics: { env, signal: controller.signal },
-      })
-      controller.signal.throwIfAborted()
-      if (a.check) {
-        if (!result.ok) {
-          await presentation.reportDiagnostics(name, formatDiagnostics(result).join('\n'), result)
-          await presentation.failure(name, 'Diagnostics found blocking dependency issues.', 1)
-          return 1
-        }
-        await presentation.success(name, formatDiagnostics(result).join('\n'), {
-          diagnostics: result,
-        })
-        return 0
-      }
-      const plan = planUbuntuInstall(result, env)
-      const planLines = renderInstallPlan(plan)
-      await presentation.disclose(name, planLines.join('\n'), { lines: planLines, plan })
-      controller.signal.throwIfAborted()
-      if (!plan.supported || plan.blockers.length) throw new Error(renderInstallPlan(plan).at(-1))
-      if (!plan.node && !plan.nativeTools) {
-        await presentation.success(name, 'No changes required.')
-        return 0
-      }
-      let approved = parsed.flags.yes
-      if (!approved && presentation.interactive) {
-        const answer = await prompts.confirm('Execute this installation plan?', controller.signal)
-        if (controller.signal.aborted) throw Object.assign(new Error(), { name: 'AbortError' })
-        if (answer === undefined || answer === false)
-          throw Object.assign(new Error('Setup cancelled'), { name: 'AbortError' })
-        approved = answer
-      }
-      if (!approved)
-        throw new Error('Setup requires --yes before making changes; use porteau setup --check')
-      controller.signal.throwIfAborted()
-      await services.executeInstallPlan(plan, approvedInstall, undefined, controller.signal)
-      controller.signal.throwIfAborted()
-      await presentation.success(name, 'Setup completed.')
       return 0
     }
     if (name === 'init') {

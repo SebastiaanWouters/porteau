@@ -6,7 +6,7 @@ describe('CLI contract', () => {
   it('advertises the complete command surface', async () => {
     const usage = await renderUsage(mainCommand)
 
-    for (const command of ['backup', 'restore', 'init', 'setup', 'doctor', 'config']) {
+    for (const command of ['backup', 'restore', 'init', 'doctor', 'config']) {
       expect(usage).toContain(command)
     }
   })
@@ -20,23 +20,15 @@ describe('CLI contract', () => {
     expect(output.join('\n')).toContain('--output')
   })
 
-  it('advertises read-only doctor and setup checks', async () => {
+  it('advertises the read-only doctor check', async () => {
     const doctorOutput: string[] = []
-    const setupOutput: string[] = []
     expect(
       await executeCli({
         args: ['doctor', '--help'],
         stdout: (line) => doctorOutput.push(line),
       }),
     ).toBe(0)
-    expect(
-      await executeCli({
-        args: ['setup', '--help'],
-        stdout: (line) => setupOutput.push(line),
-      }),
-    ).toBe(0)
     expect(doctorOutput.join('\n')).toContain('--config')
-    expect(setupOutput.join('\n')).toContain('--check')
   })
 
   it('documents guarded restore inputs and approval', async () => {
