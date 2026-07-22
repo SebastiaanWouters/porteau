@@ -9,10 +9,19 @@ const retainedTarball = process.argv[2] ? resolve(process.argv[2]) : undefined
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', ...options })
-  if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed\n${result.stdout}${result.stderr}`)
+  if (result.error) {
+    throw new Error(`${command} ${args.join(' ')} failed to start: ${result.error.message}`)
   }
-  return result.stdout
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(' ')} failed\n${result.stdout ?? ''}${result.stderr ?? ''}`,
+    )
+  }
+  return result.stdout ?? ''
+}
+
+function runPnpm(args, options = {}) {
+  return run('vp', ['exec', 'pnpm', ...args], options)
 }
 
 try {
@@ -27,7 +36,7 @@ try {
 
   const packDirectory = join(temporary, 'tarball')
   mkdirSync(packDirectory)
-  const output = run('pnpm', ['pack', '--pack-destination', packDirectory], { cwd: root })
+  const output = runPnpm(['pack', '--pack-destination', packDirectory], { cwd: root })
   const tarball = output.trim().split('\n').at(-1)
   if (!tarball?.endsWith('.tgz')) throw new Error(`Unable to locate packed tarball in:\n${output}`)
 
@@ -48,7 +57,7 @@ try {
   const project = join(temporary, 'consumer')
   mkdirSync(project)
   writeFileSync(join(project, 'package.json'), '{"name":"porteau-smoke-consumer","private":true}')
-  run('pnpm', ['add', '--ignore-scripts', tarball], { cwd: project })
+  runPnpm(['add', '--ignore-scripts', tarball], { cwd: project })
 
   const cli = join(project, 'node_modules', '.bin', 'porteau')
   const help = run(cli, ['--help'], { cwd: project })

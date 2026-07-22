@@ -43,7 +43,7 @@ jobs:
       - name: Validate exact package artifact
         run: |
           mkdir -p "$RUNNER_TEMP/release"
-          node scripts/package-smoke.mjs "$RUNNER_TEMP/release/porteau.tgz"
+          vp exec node scripts/package-smoke.mjs "$RUNNER_TEMP/release/porteau.tgz"
           cp install.sh "$RUNNER_TEMP/release/install.sh"
           npm publish "$RUNNER_TEMP/release/porteau.tgz" \
             --dry-run --ignore-scripts --access public --tag next
