@@ -3,7 +3,7 @@
 main() {
 set -Eeuo pipefail
 YES=0 CHECK=0 DEPENDENCIES_ONLY=0 TMP=''
-PORTEAU_VERSION='0.1.0-alpha.5'
+PORTEAU_VERSION='0.1.0-alpha.6'
 PORTEAU_REGISTRY='https://registry.npmjs.org'
 PORTEAU_PREFIX="${HOME:-}/.local"
 PORTEAU_BIN="$PORTEAU_PREFIX/bin/porteau"
