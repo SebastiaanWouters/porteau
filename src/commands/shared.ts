@@ -19,3 +19,14 @@ export function normalizeList(value: string | boolean, label: string): string[] 
 export function abortError(message?: string): Error {
   return Object.assign(new Error(message ?? ''), { name: 'AbortError' })
 }
+
+export async function promptOrAbort(
+  ask: (signal: AbortSignal) => Promise<string | undefined>,
+  signal: AbortSignal,
+  normalize: (value: string) => string = (value) => value,
+): Promise<string> {
+  const answer = await ask(signal)
+  signal.throwIfAborted()
+  if (answer === undefined) throw abortError()
+  return normalize(answer)
+}

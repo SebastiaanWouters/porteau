@@ -1,6 +1,6 @@
 import { dirname, resolve } from 'node:path'
 import { applyConfigOverlay } from '../core/config.js'
-import { abortError, normalizeList, normalizeRequired } from './shared.js'
+import { normalizeList, normalizeRequired, promptOrAbort } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
 export const backupCommand = defineCommand({
@@ -43,24 +43,27 @@ export const backupCommand = defineCommand({
       databases = config.include.databases
     if (user !== undefined) user = normalizeRequired(user, 'Database user')
     if (presentation.interactive) {
-      if (!user) {
-        user = await prompts.text('Database user', signal)
-        signal.throwIfAborted()
-        if (user === undefined) throw abortError()
-        user = normalizeRequired(user, 'Database user')
-      }
+      if (!user)
+        user = await promptOrAbort(
+          (abortSignal) => prompts.text('Database user', abortSignal),
+          signal,
+          (value) => normalizeRequired(value, 'Database user'),
+        )
       if (password === undefined) {
-        password = await prompts.password('Database password', signal)
-        signal.throwIfAborted()
-        if (password === undefined) throw abortError()
+        password = await promptOrAbort(
+          (abortSignal) => prompts.password('Database password', abortSignal),
+          signal,
+        )
         presentation.registerSecret(password)
       }
-      if (!databases.length) {
-        const answer = await prompts.text('Included databases (comma-separated)', signal)
-        signal.throwIfAborted()
-        if (answer === undefined) throw abortError()
-        databases = normalizeList(answer, 'Included databases')
-      }
+      if (!databases.length)
+        databases = normalizeList(
+          await promptOrAbort(
+            (abortSignal) => prompts.text('Included databases (comma-separated)', abortSignal),
+            signal,
+          ),
+          'Included databases',
+        )
     }
     if (!user || password === undefined || !databases.length)
       throw new Error(

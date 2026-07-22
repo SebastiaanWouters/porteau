@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path'
 import { applyConfigOverlay } from '../core/config.js'
 import type { RestoreConfirmation } from '../core/restore.js'
-import { abortError, normalizeRequired } from './shared.js'
+import { abortError, normalizeRequired, promptOrAbort } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
 function restoreSummary(summary: RestoreConfirmation): string {
@@ -84,33 +84,34 @@ export const restoreCommand = defineCommand({
         : undefined
     if (user !== undefined) user = normalizeRequired(user, 'Destination database user')
     if (presentation.interactive) {
-      if (!user) {
-        user = await prompts.text('Destination database user', signal)
-        signal.throwIfAborted()
-        if (user === undefined) throw abortError()
-        user = normalizeRequired(user, 'Destination database user')
-      }
+      if (!user)
+        user = await promptOrAbort(
+          (abortSignal) => prompts.text('Destination database user', abortSignal),
+          signal,
+          (value) => normalizeRequired(value, 'Destination database user'),
+        )
       if (password === undefined) {
-        password = await prompts.password('Destination database password', signal)
-        signal.throwIfAborted()
-        if (password === undefined) throw abortError()
+        password = await promptOrAbort(
+          (abortSignal) => prompts.password('Destination database password', abortSignal),
+          signal,
+        )
         presentation.registerSecret(password)
       }
-      if (!artifact) {
-        artifact = await prompts.text('Backup artifact directory', signal)
-        signal.throwIfAborted()
-        if (artifact === undefined) throw abortError()
-      }
-      if (!sourceDatabase) {
-        sourceDatabase = await prompts.text('Source database in artifact', signal)
-        signal.throwIfAborted()
-        if (sourceDatabase === undefined) throw abortError()
-      }
-      if (!destinationDatabase) {
-        destinationDatabase = await prompts.text('Destination database', signal)
-        signal.throwIfAborted()
-        if (destinationDatabase === undefined) throw abortError()
-      }
+      if (!artifact)
+        artifact = await promptOrAbort(
+          (abortSignal) => prompts.text('Backup artifact directory', abortSignal),
+          signal,
+        )
+      if (!sourceDatabase)
+        sourceDatabase = await promptOrAbort(
+          (abortSignal) => prompts.text('Source database in artifact', abortSignal),
+          signal,
+        )
+      if (!destinationDatabase)
+        destinationDatabase = await promptOrAbort(
+          (abortSignal) => prompts.text('Destination database', abortSignal),
+          signal,
+        )
     }
     if (!user || password === undefined || !artifact || !sourceDatabase || !destinationDatabase)
       throw new Error(

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { link, open, rm } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { defaultConfig, validateConfig } from '../core/config.js'
-import { abortError, normalizeList, normalizeRequired, UsageError } from './shared.js'
+import { normalizeList, normalizeRequired, promptOrAbort, UsageError } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
 function initialYaml(host: string, port: number, user: string | undefined, databases: string[]) {
@@ -68,24 +68,26 @@ export const initCommand = defineCommand({
       user = values.user ? String(values.user) : undefined,
       databases = values.database ? normalizeList(values.database, '--database') : []
     if (presentation.interactive) {
-      if (!host) {
-        host = await prompts.text('Database host', signal)
-        signal.throwIfAborted()
-        if (host === undefined) throw abortError()
-        host = normalizeRequired(host, 'Database host')
-      }
-      if (!user) {
-        user = await prompts.text('Database user', signal)
-        signal.throwIfAborted()
-        if (user === undefined) throw abortError()
-        user = normalizeRequired(user, 'Database user')
-      }
-      if (!databases.length) {
-        const answer = await prompts.text('Included databases (comma-separated)', signal)
-        signal.throwIfAborted()
-        if (answer === undefined) throw abortError()
-        databases = normalizeList(answer, 'Included databases')
-      }
+      if (!host)
+        host = await promptOrAbort(
+          (abortSignal) => prompts.text('Database host', abortSignal),
+          signal,
+          (value) => normalizeRequired(value, 'Database host'),
+        )
+      if (!user)
+        user = await promptOrAbort(
+          (abortSignal) => prompts.text('Database user', abortSignal),
+          signal,
+          (value) => normalizeRequired(value, 'Database user'),
+        )
+      if (!databases.length)
+        databases = normalizeList(
+          await promptOrAbort(
+            (abortSignal) => prompts.text('Included databases (comma-separated)', abortSignal),
+            signal,
+          ),
+          'Included databases',
+        )
     }
     if (!host) host = 'localhost'
     else host = normalizeRequired(host, '--host')
