@@ -45,6 +45,7 @@ mkdir -p "$channel_dir"
 
 if ! gh release view "$channel" >/dev/null 2>&1; then
   gh release create "$channel" "$install_script" \
+    --target "${GITHUB_SHA:?GITHUB_SHA is required}" \
     --prerelease --title alpha --notes "Current alpha installer (floating channel)."
 else
   channel_prerelease="$(gh release view "$channel" --json isPrerelease --jq .isPrerelease)"
