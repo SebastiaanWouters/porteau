@@ -11,12 +11,12 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/sebastiaanwouters/porteau/releases/download/alpha/install.sh | bash
 ```
 
-Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64/arm64. The installer shows its plan and asks before changing the system. Unattended: `| bash -s -- --yes`.
+Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64/arm64. Shows a plan before changing the system. Add `| bash -s -- --yes` for unattended installs.
 
-Pin an older alpha: replace `alpha` with a release tag (`vX.Y.Z-alpha.N`), or
-`npm install --global --prefix "$HOME/.local" --ignore-scripts porteau@X.Y.Z-alpha.N`.
-On other platforms, install Node.js 22.18+ and matching mydumper/myloader, then
+Other platforms: install Node.js 22.18+, matching mydumper/myloader, then
 `npm install --global --prefix "$HOME/.local" --ignore-scripts porteau@next`.
+
+Older alphas: use a release tag in place of `alpha`, or `porteau@X.Y.Z-alpha.N`.
 
 ## Quick start
 
