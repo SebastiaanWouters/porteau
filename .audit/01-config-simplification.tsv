@@ -1,0 +1,29 @@
+ts	phase	decision	why	evidence	result
+2026-07-22T20:29:38Z	frame	Adopt docs/plans/01-config-simplification as the run playbook	Plan already chose named registries and nine landable phases; figure-it-out adopts it instead of redesigning	docs/plans/01-config-simplification/overview.md	framed
+2026-07-22T20:29:38Z	frame	Done when registries YAML + ResolvedRun wire backup/restore/init/config/docs, legacy keys hard-reject, and vp check/test/pack are green	Falsifiable end gate from plan verification and testing.md CLI matrix	docs/plans/01-config-simplification/testing.md	open
+2026-07-22T20:30:20Z	how	Restore never reads backup.directory; --artifact is cwd-based while backup output uses configDirectory	Phase 6 must unify artifact lookup under artifacts.directory with the same path base as backup	src/commands/restore.ts explorer ce83533a	noted
+2026-07-22T20:30:50Z	how	Config load, backup, and restore explorers finished; explainer synthesizing	Ground before phase 1 subtract	explorers f9b432d7 f91454ad ce83533a	in progress
+2026-07-22T20:30:50Z	phase-1	architect skipped: subtract-only field removal named by plan	No novel boundary; ResolvedRun architect waits for phase 2	docs/plans/01-config-simplification/phase-1-subtract-public-knobs.md	skipped
+2026-07-22T20:31:12Z	how	Explainer gpt-5.6-sol-medium hit API limit; retried on cursor-grok-4.5-high-fast	Keep how gate moving without blocking phase 1	c26c9ca8 failed; retry 828e0ff5	retried
+2026-07-22T20:31:41Z	how	how synthesis complete: path-base and naming asymmetries confirmed	Grounding for registries + artifacts redesign	explainer 828e0ff5	done
+2026-07-22T20:34:18Z	phase-1	Subtracted eight public knobs; gates green; committed	Subtract before registries; parked fixed dials as constants	cc13369	tests green
+2026-07-22T20:34:34Z	architect	Arena for ResolvedRun types: 3 candidates	Phase 2 boundary needs typed model before registries	/tmp/arena-resolved-run	running
+2026-07-22T20:34:42Z	architect	Candidate 1 claude-sonnet hit API limit; retried on gpt-5.6-terra-medium	Keep arena diversity without waiting on a dead runner	2f7e0485 failed; retry spawned	retried
+2026-07-22T20:34:50Z	architect	Candidate 1 gpt terra also API-limited; retry on claude-fable	Preserve third design angle if the model is available	c1f31f08 failed	retried
+2026-07-22T20:35:11Z	architect	Candidate 1 filled by lead after three API-limit dropouts	Never-block: keep arena at N=3 with a distinct brand-heavy design	/tmp/arena-resolved-run/candidate-1	written
+2026-07-22T20:35:33Z	architect	Picked candidate-2 as ResolvedRun base; rejected refinements and PorteauConfig Pick	Cleaner boundary and phase-2 sized; plan wants one ResolvedRun	/tmp/arena-resolved-run/synthesis.md	picked
+2026-07-22T20:35:57Z	architect	Cross-judge agreed on candidate-2 base	Confirms lead pick; refinements deferred to phase 5/6	judge 95d8e732	agreed
+2026-07-22T20:37:06Z	phase-2	Added runtime-config ResolvedRun types; gates green; committed	Architect pick candidate-2; illegal states branded out	e484c14	tests green
+2026-07-22T20:37:29Z	phase-3	Started registries schema cut with same-wave caller migration	Migrate then delete; keep gates green without dual schema	agent 3924e051	running
+2026-07-22T20:42:36Z	phase-3	Registries schema landed; legacy keys migrate-error; callers moved; committed	Migrate then delete; no dual-read shim	7ecbdec	tests green
+2026-07-22T20:42:48Z	phase-4	Started resolveRun implementation	Single place for defaulting and catalog lookup	agent 17280406	running
+2026-07-22T20:44:30Z	phase-4	resolveRun landed; catalog-key only; committed	Single resolve boundary before wiring commands	d7b8801	tests green
+2026-07-22T20:44:37Z	phase-5	Started wiring backup to ResolvedRun	Core should trust resolved types; delete backup use of phase-3 helpers	agent 78c8a44b	running
+2026-07-22T20:48:17Z	phase-5	Backup wired to ResolvedRun; default output under artifacts; committed	Core trusts resolved types; credentials stay at command boundary	67517e0	tests green
+2026-07-22T20:48:29Z	phase-6	Started wiring restore to ResolvedRun + artifact auto-pick	Unify path base with backup; catalog key for source	agent 01b8ea81	running
+2026-07-22T20:52:22Z	phase-6	Restore wired to ResolvedRun; artifact auto-pick; committed	Unify path base; catalog key source; hard-cut --source-database	77257ba	tests green
+2026-07-22T20:52:32Z	phase-7	Started --server/--database CLI selection + prompts	Credentials must overlay selected server not only defaults	agent 66252eb2	running
+2026-07-22T20:56:02Z	phase-7	'--server/--database selection + prompts; credentials on selected server; committed	Experience-first prompts only when catalogs are multi-entry	0277415	tests green
+2026-07-22T20:57:00Z	phase-8	Init/config registries confirmed; config redacts all server passwords; committed	Phase 3 already wrote registries template; polish secret registration	ae55925	tests green
+2026-07-22T20:58:09Z	phase-9	README teaches registries, selection, artifacts, migration; committed	Experience-first operator docs for the shipped shape	d1d7d87	vp check green
+2026-07-22T20:58:09Z	verify	Full vp check/test/pack green after phase 9	End-gate predicate for the redesign	local gates	tests green
