@@ -1,11 +1,11 @@
-import { renderUsage } from 'citty'
 import { describe, expect, it } from 'vite-plus/test'
-import { executeCli, mainCommand } from '../src/cli.js'
+import { executeCli } from '../src/cli.js'
 
 describe('CLI contract', () => {
   it('advertises the complete command surface', async () => {
-    const usage = await renderUsage(mainCommand)
-
+    const output: string[] = []
+    expect(await executeCli({ args: ['--help'], stdout: (line) => output.push(line) })).toBe(0)
+    const usage = output.join('\n')
     for (const command of ['backup', 'restore', 'init', 'doctor', 'config']) {
       expect(usage).toContain(command)
     }

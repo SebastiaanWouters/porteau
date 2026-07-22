@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { defineCommand, renderUsage } from 'citty'
 import { stripVTControlCharacters } from 'node:util'
 import packageJson from '../package.json' with { type: 'json' }
 import { collectDiagnostics } from './commands/doctor-format.js'
@@ -12,22 +11,10 @@ import { runRestore } from './core/restore.js'
 import { OutputError, Presentation } from './presentation/context.js'
 import { clackPrompts, type PromptAdapter } from './presentation/prompts.js'
 import type { ProgressFactory } from './presentation/progress.js'
+import { renderUsage } from './cli/usage.js'
 
 export type { CliServices } from './commands/types.js'
-
-export const mainCommand = defineCommand({
-  meta: { name: 'porteau', version: packageJson.version, description: packageJson.description },
-  // Citty only formats help until unit 5; command modules already own run handlers.
-  subCommands: COMMANDS as never,
-})
-
-async function usage(name?: CommandName): Promise<string> {
-  const parent = { meta: { name: 'porteau' } }
-  const rendered = name
-    ? await renderUsage(COMMANDS[name] as never, parent)
-    : await renderUsage(mainCommand)
-  return `${rendered}\nGLOBAL OPTIONS\n  --json  JSONL output\n  --quiet  Essential output only\n  --verbose  Detailed output\n  --no-interactive  Never prompt\n  --yes  Approve restore mutation`
-}
+export { COMMANDS } from './commands/registry.js'
 
 export interface CliExecutionOptions {
   args?: string[]
@@ -269,7 +256,7 @@ export async function executeCli(options: CliExecutionOptions = {}): Promise<num
       return 0
     }
     if (parsed.help || !name) {
-      const text = await usage(name)
+      const text = renderUsage(name)
       controller.signal.throwIfAborted()
       const rendered = presentation.color ? text : stripVTControlCharacters(text)
       await presentation.success(name ?? 'porteau', rendered, { help: rendered })
