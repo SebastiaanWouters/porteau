@@ -119,10 +119,6 @@ describe('standalone generated installer', () => {
     expect(script).toContain('"$PORTEAU_BIN" doctor --no-interactive')
     expect(script).not.toContain('porteau@latest')
     expect(script).not.toMatch(/sudo\s+npm/u)
-  })
-
-  it('keeps the 0.0.0 installer explicitly source-only and rejects unsafe versions', () => {
-    expect(renderInstallScript('0.0.0')).toContain('Porteau remains source-only at version 0.0.0.')
     expect(() => renderInstallScript('1.0.0; touch /tmp/unsafe')).toThrow(
       'Package version is unsafe',
     )

@@ -20,7 +20,6 @@ const LEFTOVER_TOKEN = /@[A-Z][A-Z0-9_]*@/u
 
 const INSTALL_SCRIPT_TOKEN_KEYS = [
   'PORTEAU_VERSION',
-  'PORTEAU_RELEASED',
   'PORTEAU_REGISTRY',
   'ASSET_CASES',
   'SUPPORTED_TARGET_DESCRIPTION',
@@ -50,7 +49,6 @@ function buildInstallScriptSubstitutions(packageVersion: string): InstallScriptS
 
   return {
     PORTEAU_VERSION: packageVersion,
-    PORTEAU_RELEASED: packageVersion !== '0.0.0' ? '1' : '0',
     PORTEAU_REGISTRY,
     ASSET_CASES: assetCases,
     SUPPORTED_TARGET_DESCRIPTION: supportedTargetDescription,

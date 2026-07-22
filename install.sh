@@ -3,7 +3,7 @@
 main() {
 set -Eeuo pipefail
 YES=0 CHECK=0 DEPENDENCIES_ONLY=0 TMP=''
-PORTEAU_VERSION='0.1.0-alpha.0' PORTEAU_RELEASED=1
+PORTEAU_VERSION='0.1.0-alpha.0'
 PORTEAU_REGISTRY='https://registry.npmjs.org'
 PORTEAU_PREFIX="${HOME:-}/.local"
 PORTEAU_BIN="$PORTEAU_PREFIX/bin/porteau"
@@ -58,12 +58,12 @@ verify_release() {
   [[ -n "$TMP" ]] || TMP="$(mktemp -d)"
   (cd "$TMP" && env -u PORTEAU_MYDUMPER -u PORTEAU_MYLOADER "$PORTEAU_BIN" doctor --no-interactive >/dev/null) || { echo 'Porteau doctor verification failed.' >&2; return 1; }
 }
-(( PORTEAU_RELEASED && ! DEPENDENCIES_ONLY && ! CHECK )) && validate_user_prefix
+(( ! DEPENDENCIES_ONLY && ! CHECK )) && validate_user_prefix
 NODE=0 TOOLS=0 PORTEAU=0; node_ok || NODE=1
 MYDUMPER_VERSION="$(tool_version mydumper || true)"
 MYLOADER_VERSION="$(tool_version myloader || true)"
 tool_pair_ok "$MYDUMPER_VERSION" "$MYLOADER_VERSION" || TOOLS=1
-(( PORTEAU_RELEASED && ! DEPENDENCIES_ONLY )) && { porteau_ok || PORTEAU=1; }
+(( ! DEPENDENCIES_ONLY )) && { porteau_ok || PORTEAU=1; }
 BLOCKED_DOWNGRADE=0
 if (( TOOLS )) && { { [[ -n "$MYDUMPER_VERSION" ]] && dpkg --compare-versions "$MYDUMPER_VERSION" gt '1.0.3-1'; } || { [[ -n "$MYLOADER_VERSION" ]] && dpkg --compare-versions "$MYLOADER_VERSION" gt '1.0.3-1'; }; }; then BLOCKED_DOWNGRADE=1; fi
 echo 'Porteau installation plan'
@@ -90,15 +90,13 @@ if (( PORTEAU )); then
   echo '  npm uses temporary cache/config and never sudo; sudo is limited to the APT/keyring commands above.'
 elif (( DEPENDENCIES_ONLY )); then
   echo '  Dependencies-only: Porteau will not be checked or installed'
-elif (( ! PORTEAU_RELEASED )); then
-  echo '  Pre-release source checkout: Porteau 0.0.0 is not installed by this script'
 fi
 for marker in NVM_DIR ASDF_DIR MISE_DATA_DIR VOLTA_HOME; do [[ -n "${!marker:-}" ]] && echo "  Warning: user-managed Node detected ($marker); system Node will not replace its shims."; done
 (( BLOCKED_DOWNGRADE )) && { echo "Automatic setup will not downgrade detected native tools ($MYDUMPER_VERSION / $MYLOADER_VERSION) to 1.0.3-1; install a matching supported pair manually." >&2; exit 1; }
-if (( ! NODE && ! TOOLS && (DEPENDENCIES_ONLY || ! PORTEAU_RELEASED) )); then
-  echo 'All dependencies are compatible.'; (( DEPENDENCIES_ONLY )) || echo 'Porteau remains source-only at version 0.0.0.'; exit 0
+if (( ! NODE && ! TOOLS && DEPENDENCIES_ONLY )); then
+  echo 'All dependencies are compatible.'; exit 0
 fi
-if (( ! NODE && ! TOOLS && PORTEAU_RELEASED && ! PORTEAU )); then
+if (( ! NODE && ! TOOLS && ! PORTEAU )); then
   verify_release || exit 1
   echo "Porteau $PORTEAU_VERSION and all dependencies are ready."
   exit 0
@@ -149,7 +147,7 @@ if ! node_ok || ! tool_pair_ok "$MYDUMPER_VERSION" "$MYLOADER_VERSION"; then
   echo 'Post-install dependency verification failed.' >&2
   exit 1
 fi
-if (( PORTEAU_RELEASED && ! DEPENDENCIES_ONLY )); then
+if (( ! DEPENDENCIES_ONLY )); then
   verify_release || exit 1
   echo "Porteau $PORTEAU_VERSION and all dependencies installed and verified."
 else
