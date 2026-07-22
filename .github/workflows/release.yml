@@ -75,6 +75,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
+          registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -82,10 +83,6 @@ jobs:
           path: candidate
       - name: Publish or verify the exact package
         run: bash scripts/release-publish-npm.sh candidate/porteau.tgz
-        env:
-          # Trusted publishing must not see a classic or GitHub token.
-          NODE_AUTH_TOKEN: ''
-          NPM_TOKEN: ''
 
   registry-installer:
     name: Published installer
