@@ -29,3 +29,4 @@ ts	phase	decision	why	evidence	result
 2026-07-22T20:58:09Z	verify	Full vp check/test/pack green after phase 9	End-gate predicate for the redesign	local gates	tests green
 2026-07-22T20:58:25Z	pr	Opened PR #4 for config simplification	Hand back for review and babysit CI	https://github.com/SebastiaanWouters/porteau/pull/4	open
 2026-07-22T20:59:38Z	verify	CI green on Node 22.18 and 24 for PR #4	Babysit end-gate	https://github.com/SebastiaanWouters/porteau/actions/runs/29957348155	tests green
+2026-07-22T21:01:57Z	babysit	Fixed PORTEAU_* overlay onto selected --server after trail review flag	Plan required env on selected server after resolve; default-only overlay was wrong for cross-server restore	aeb5c75	tests green
