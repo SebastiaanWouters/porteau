@@ -120,8 +120,8 @@ The following combines the current layout through Phase 3 with later target path
 ```text
 porteau/
 ├── .dockerignore                    # Excludes local secrets/artifacts from qualification images
-├── INSTALL.md                       # Automated and manual installation guidance
-├── install.sh                       # Generated standalone Ubuntu dependency bootstrap
+├── README.md                        # Usage and installation guidance
+├── install.sh                       # Generated standalone Ubuntu installer
 ├── package.json
 ├── vite.config.ts
 ├── porteau.config.yaml              # Example configuration (planned)
@@ -623,12 +623,17 @@ Rules:
 
 ### Purpose
 
-The root `install.sh` is an Ubuntu-only dependency bootstrap. It checks and, with explicit consent, installs:
+The root `install.sh` is an Ubuntu-only release installer. It checks and, with explicit consent, installs:
 
 - A compatible Node.js runtime when the npm CLI will need one.
 - mydumper and myloader from the pinned manifest when either is missing or incompatible.
+- The exact embedded Porteau release from npm into the user's `~/.local` prefix, with lifecycle scripts disabled.
 
-It does not install a MySQL server and does not silently alter the system. Automated macOS and other Linux installation are deferred; those platforms receive manual guidance.
+`--dependencies-only` checks or installs only Node and the native tools; it neither requires `HOME` nor checks or installs Porteau. It exists for source and prepublication qualification. `--check` is read-only, may run as root, and returns 0 only when the requested mode fully verifies, 1 when work or repair is needed, and 2 for usage errors. Released mutation requires a non-root user and validates the existing absolute `HOME` and `~/.local` type, ownership, and writability before approval or mutation.
+
+For a release, the plan discloses and executes `npm view --registry https://registry.npmjs.org --userconfig <temporary>/npmrc --cache <temporary>/npm-cache --json porteau@<exact-version> version` followed by `npm install --global --prefix $HOME/.local --ignore-scripts --no-audit --no-fund --registry https://registry.npmjs.org --userconfig <temporary>/npmrc --cache <temporary>/npm-cache porteau@<exact-version>`. npm never runs under sudo; sudo is restricted to the disclosed keyring and APT operations. Final verification requires exact package metadata, a launcher resolving to that package's `dist/cli.mjs`, the exact CLI version, compatible dependencies, and a successful doctor run from a neutral temporary directory with tool overrides unset.
+
+Version `0.0.0` is an explicit unreleased sentinel: that generated script prepares dependencies but does not request an unpublished package. The installer does not install a MySQL server or silently alter the system. Automated macOS and other Linux installation are deferred; those platforms receive manual guidance.
 
 ### Supported systems
 
@@ -653,7 +658,7 @@ Everything else exits without mutation and prints supported alternatives.
 2. Validate `ID=ubuntu` from `/etc/os-release`.
 3. Read `VERSION_CODENAME` and `dpkg --print-architecture`.
 4. Check `node`, `npm`, `mydumper`, and `myloader` independently, including versions.
-5. Treat compatible existing dependencies as success without prompting.
+5. Treat an exact existing Porteau release and compatible dependencies as success without prompting.
 6. Show every repository, package, version, asset, checksum, command, and sudo requirement before confirmation.
 7. Default every prompt to No.
 8. Read prompts from `/dev/tty` so a downloaded script can still prompt.
@@ -661,10 +666,11 @@ Everything else exits without mutation and prints supported alternatives.
 10. Request sudo only around apt/keyring operations, never for the whole script.
 11. Use `mktemp -d` and install cleanup traps before downloading.
 12. Quote all expansions, avoid `eval`, and remove partial downloads.
-13. Re-run every version check after installation.
-14. Declining an install is a clean cancellation with manual instructions.
-15. Validation, checksum, download, apt, or post-install failures return non-zero.
-16. Re-running the script is idempotent.
+13. Install Porteau without sudo into `~/.local`, verify its exact version, and run `porteau doctor`.
+14. Re-run every version check after installation.
+15. Declining an install is a clean cancellation with manual instructions.
+16. Validation, checksum, download, apt, npm, or post-install failures return non-zero.
+17. Re-running the script is idempotent.
 
 ### Node.js handling
 
@@ -818,7 +824,7 @@ Development must not require running `install.sh` against the host. Installer un
 
 ## 16. Test strategy
 
-Tests are added with the phase that introduces the behavior. Phase 2 turned the initial subprocess convention into reusable fixture executables and pinned observed native machine-log fixtures. The default Vitest run currently has 155 passing tests and three skipped opt-in MySQL tests. Deterministic tests use injected MySQL protocol connections and subprocess fixtures. Phase 3 also committed host-guarded installer and real-MySQL Docker/Compose harnesses; they require an external Docker runner and have not been executed in the current orb. Phase 4 added presentation-context and command-level guided-flow coverage. Phase 5 adds guarded restore artifact, destination-preflight, policy, process-agreement, cancellation, cleanup, CLI-approval, privilege-restriction, and package-install coverage. No later phase should replace or weaken an earlier safety gate.
+Tests are added with the phase that introduces the behavior. Phase 2 turned the initial subprocess convention into reusable fixture executables and pinned observed native machine-log fixtures. The default Vitest run currently has 169 passing tests and four skipped opt-in MySQL tests. Deterministic tests use injected MySQL protocol connections and subprocess fixtures. Phase 3 also committed host-guarded installer and real-MySQL Docker/Compose harnesses; they require an external Docker runner and have not been executed in the current orb. Phase 4 added presentation-context and command-level guided-flow coverage. Phase 5 adds guarded restore artifact, destination-preflight, policy, process-agreement, cancellation, cleanup, CLI-approval, privilege-restriction, and package-install coverage. No later phase should replace or weaken an earlier safety gate.
 
 ### Unit tests
 
@@ -937,7 +943,7 @@ Do not import Clack or consola into `src/core` or `src/setup`. Do not make backu
 | Phase 2 — safe backup integration | Complete | None; broader qualification items are tracked in Section 16 |
 | Phase 3 — diagnostics and setup | Implementation complete | None; run the committed Ubuntu installer matrix and MySQL harness on suitable external Docker runners |
 | Phase 4 — presentation and guided flows | Complete | None within its implemented command and output boundary |
-| Phase 5 — guarded restore and release | **Implementation complete; external qualification pending** | Run the committed pinned MySQL round trip and Node matrix on CI/Docker before declaring the release gate passed |
+| Phase 5 — guarded restore and release | **Implementation complete; alpha release packaging ready pending Trusted Publishing setup and a green tagged release run** | Create `npm-release` + npm Trusted Publisher, land the alpha commit on `main`, tag `v0.1.0-alpha.0`, and require the Release alpha workflow to finish green |
 
 There is no Phase 6 in this plan. All planned product implementation is present; only execution of the committed external qualification matrices remains before release.
 
@@ -983,7 +989,7 @@ Implemented:
 - Guarded Node 24 NodeSource `nodistro` flow using a dedicated `signed-by` keyring and reviewed fingerprint, without remote setup-script execution.
 - Complete pre-approval disclosure, cancellation-aware mutation gates, and restricted Docker build contexts.
 - ShellCheck and Bats behavior coverage plus disposable Ubuntu 22.04/24.04 amd64 and opt-in arm64 container runners. Real installation runs twice to prove idempotency without touching the host.
-- Manual installation guidance for unsupported platforms in `INSTALL.md`.
+- Manual installation guidance for unsupported platforms in `README.md`.
 - An opt-in MySQL 8.4 container harness that drives Porteau's real backup path under concurrent writes, checks filtering and nontransactional rejection, validates cancellation cleanup, and now round-trips through the guarded restore service and pinned myloader.
 
 The generator must consume validated canonical data, but the committed `install.sh` must remain standalone Bash because it runs before Node/Porteau may exist. A drift test regenerates to a temporary path and compares bytes. Never run installer integration tests against the host.
@@ -1018,13 +1024,13 @@ Completed Phase 5 implementation:
 - Exposed guarded restore through paired interactive and JSONL CLI paths. Artifact/source/destination inputs are required, password argv is rejected, resolved policies are disclosed before approval, interactive confirmation defaults to No, and non-interactive mutation requires `--yes`.
 - Added command-level coverage for policy precedence, disclosure-before-confirmation, cancellation, incomplete automation input, redaction, help, and terminal result envelopes.
 - Updated the disposable MySQL 8.4 harness to round-trip through the guarded restore service and pinned myloader, validate row bounds and data exclusion, and refuse a second restore into the populated target. MySQL 8.4's expanded global `SHOW GRANTS` representation is accepted only when the complete qualified static privilege set is present and no destination partial revoke exists. Shared grant parsing models partial `REVOKE` rows explicitly; backup preflight subtracts database restrictions from global privileges so restricted `SELECT`, `SHOW VIEW`, or `TRIGGER` access cannot be mistaken for complete catalog/object coverage.
-- Added public npm packaging metadata and a clean-install smoke test that allow-lists package contents, requires `INSTALL.md` and `dist/cli.mjs`, installs the tarball into an empty consumer, and invokes the installed `porteau` command shim.
+- Added public npm packaging metadata and a clean-install smoke test that requires exact direct runtime versions, allow-lists package contents, requires `dist/cli.mjs`, installs the tarball into local and user-owned global prefixes, and invokes both `porteau` command shims.
 - Added Node 22.18/24 checks and the pinned MySQL 8.4 guarded round trip to CI.
 - Added paired interactive/automation documentation, the public JSONL operational contract, cancellation and verification terminology, supported boundaries, and exact guarded-restore examples.
 - Reviewed command help and shell completion. Help now exposes every restore policy; generated shell completion is deliberately not shipped in v1 because citty has no stable generated-completion contract.
 - Deferred standalone Node 26 executable packaging as a non-blocking experiment because Vite+/tsdown support remains experimental and native tools remain external. MySQL Shell remains a separate evidence-driven roadmap item.
 
-The current default suite has 155 passing tests and 3 skipped opt-in MySQL integration tests; `vp check`, `vp test`, `vp pack`, and the clean-install package smoke pass in the orb. This orb does not provide Docker, so the committed pinned-binary MySQL round trip and external Node CI matrix have not been executed here. Phase 5's implementation is complete, but the exit gate must not be declared passed until those external jobs are green.
+The current default suite has 179 passing tests and four skipped opt-in MySQL integration tests; `vp check`, `vp test`, `vp pack`, and the clean-install package smoke pass locally. External MySQL and Ubuntu installer matrices are committed and shared through `.github/workflows/qualify-external.yml` for CI and release. Phase 5's implementation is complete; the remaining alpha gate is Trusted Publishing setup plus a successful tagged Release alpha workflow.
 
 **Exit gate:** destructive destination behavior is impossible without explicit policy and confirmation, round-trip tests pass on the supported matrix, npm pack/install invokes `dist/cli.mjs`, documentation matches both human and JSON modes, and release artifacts contain no credentials or temporary data.
 

@@ -1,7 +1,22 @@
 {
   "name": "porteau",
-  "version": "0.0.0",
+  "version": "0.1.0-alpha.0",
   "description": "Safe, observable MySQL logical backups and restores with mydumper and myloader",
+  "keywords": [
+    "mysql",
+    "backup",
+    "restore",
+    "mydumper",
+    "myloader",
+    "cli"
+  ],
+  "homepage": "https://github.com/sebastiaanwouters/porteau#readme",
+  "bugs": "https://github.com/sebastiaanwouters/porteau/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sebastiaanwouters/porteau.git"
+  },
+  "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@11.15.1",
   "engines": {
@@ -21,11 +36,11 @@
     "porteau": "dist/cli.mjs"
   },
   "files": [
-    "dist",
-    "INSTALL.md"
+    "dist"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "next"
   },
   "dependencies": {
     "@clack/prompts": "1.7.0",

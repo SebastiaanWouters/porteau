@@ -1,0 +1,132 @@
+name: Release alpha
+
+on:
+  push:
+    tags: ['v*-alpha.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: porteau-release
+  cancel-in-progress: false
+
+jobs:
+  package-preflight:
+    name: Package preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@8a7496fd44e8a1b0a88a7459e36213b2fefc1d15 # v1
+        with:
+          node-version: '24'
+          cache: false
+          run-install: false
+      - name: Validate release tag and source
+        run: node scripts/release-validate-tag.mjs
+      - run: vp install --frozen-lockfile
+      - name: Verify generated installer
+        run: |
+          vp exec tsx scripts/generate-install-script.ts "$RUNNER_TEMP/install.sh"
+          cmp install.sh "$RUNNER_TEMP/install.sh"
+      - name: Verify and build
+        run: vp check && vp test && vp pack
+      - name: Validate exact package artifact
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          node scripts/package-smoke.mjs "$RUNNER_TEMP/release/porteau.tgz"
+          cp install.sh "$RUNNER_TEMP/release/install.sh"
+          npm publish "$RUNNER_TEMP/release/porteau.tgz" \
+            --dry-run --ignore-scripts --access public --tag next
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: porteau-release-candidate
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  qualify:
+    name: Pre-publish qualification
+    uses: ./.github/workflows/qualify-external.yml
+    with:
+      compose_prefix: porteau-release-${{ github.run_id }}-${{ github.run_attempt }}
+
+  npm-publish:
+    name: Publish npm package
+    needs: [package-preflight, qualify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@8a7496fd44e8a1b0a88a7459e36213b2fefc1d15 # v1
+        with:
+          node-version: '24'
+          cache: false
+          run-install: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: porteau-release-candidate
+          path: candidate
+      - name: Publish or verify the exact package
+        run: bash scripts/release-publish-npm.sh candidate/porteau.tgz
+
+  registry-installer:
+    name: Published installer
+    needs: npm-publish
+    uses: ./.github/workflows/qualify-external.yml
+    with:
+      compose_prefix: porteau-published-${{ github.run_id }}-${{ github.run_attempt }}
+      include_mysql: false
+      release_test: true
+
+  github-release:
+    name: Publish GitHub prerelease
+    needs: registry-installer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: porteau-release-candidate
+          path: candidate
+      - name: Create or verify the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release-publish-github.sh candidate/install.sh
+
+  public-url-smoke:
+    name: Public installer smoke
+    needs: github-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      PORTEAU_COMPOSE_PROJECT: porteau-public-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Verify and run the documented public installer
+        run: |
+          set -Eeuo pipefail
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/install.sh"
+          curl --proto '=https' --tlsv1.2 -fsSL "$url" --output "$RUNNER_TEMP/install.sh"
+          cmp install.sh "$RUNNER_TEMP/install.sh"
+          PORTEAU_INSTALL_URL="$url" bash scripts/verify-external.sh ubuntu-2404

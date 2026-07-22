@@ -1,55 +1,104 @@
 # Porteau
 
-Porteau is a safety-first TypeScript CLI for consistent MySQL logical backups and restores using `mydumper` and `myloader`. See [INSTALL.md](INSTALL.md) for supported installation and native-tool setup.
+Porteau is a safety-first CLI for consistent MySQL logical backups and restores with `mydumper` and `myloader`. It validates the database and native tools before execution, publishes backup artifacts atomically, and discloses the resolved restore policy before requiring approval to change a destination.
 
-## Development verification
+Porteau `0.1.0-alpha.0` is an alpha release. Test backups and restores against disposable databases before production use.
 
-Use the same entry points locally and in CI:
+## Installation
+
+The installer supports Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64/arm64. It shows its plan, asks before changing anything, and installs Porteau plus compatible Node.js, `mydumper`, and `myloader` dependencies:
 
 ```sh
-vp run verify             # format, lint, types, unit tests, build, and package smoke test
-vp run verify:external    # disposable MySQL plus installers native to this machine
-vp run package:dry-run    # local suite plus npm publication dry run
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/sebastiaanwouters/porteau/releases/download/v0.1.0-alpha.0/install.sh | bash
 ```
 
-For a focused external rerun, use `vp run verify:mysql`, `vp run verify:installers`, or, on a native arm64 host, `bash scripts/verify-external.sh ubuntu-2404-arm64`. External verification requires Docker. The default external command reports architecture coverage explicitly; native Ubuntu arm64 remains a separate CI job on amd64 developer machines. `package:dry-run` verifies package construction only; it is not the complete release gate. Actual npm publication is intentionally not part of any verification command.
+Porteau is installed without `sudo` under `~/.local`; `sudo` is limited to disclosed system package changes. The native package is checksum-verified, the Node.js repository key is fingerprint-verified, and Porteau is installed at the exact release version with npm lifecycle scripts disabled. The completed installation runs `porteau doctor` and prints PATH guidance when needed.
 
-## Interactive use
+For unattended installation:
 
-Run `porteau doctor` first. For a guided backup, use a terminal and omit values you want Porteau to prompt for:
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/sebastiaanwouters/porteau/releases/download/v0.1.0-alpha.0/install.sh |
+  bash -s -- --yes
+```
+
+On other platforms, install Node.js 22.18 or newer and matching `mydumper`/`myloader` 1.0.3-1 or newer, then install the alpha package:
+
+```sh
+npm install --global --prefix "$HOME/.local" --ignore-scripts porteau@0.1.0-alpha.0
+export PATH="$HOME/.local/bin:$PATH"
+porteau doctor
+```
+
+Porteau targets MySQL 8.4 and requires InnoDB tables for consistent production backups. Unlisted platforms remain unqualified.
+
+## Quick start
+
+Create a configuration, inspect the effective result, and run the read-only environment diagnostics:
+
+```sh
+porteau init --user backup_operator --database app
+porteau config
+porteau doctor
+```
+
+Porteau reads `porteau.config.yaml` from the working directory by default. Use `--config <file>` to select another YAML file. Command flags override environment variables, which override YAML and then safe defaults. Supported environment variables are `PORTEAU_HOST`, `PORTEAU_PORT`, `PORTEAU_USER`, `PORTEAU_PASSWORD`, `PORTEAU_MYDUMPER`, and `PORTEAU_MYLOADER`.
+
+Create a backup:
 
 ```sh
 export PORTEAU_PASSWORD='…'
-porteau backup --user backup_operator --database app --output ./backups/app-2026-07-21
+porteau backup \
+  --user backup_operator \
+  --database app \
+  --output ./backups/app-2026-07-21
 ```
 
-A backup destination must not already exist. Do not put a password in command arguments, YAML, shell history, or source control: set `PORTEAU_PASSWORD` in the process environment (ideally through a secret manager). Porteau passes native tools a short-lived defaults file rather than a password argument and removes it during cleanup.
+The final output directory must not exist. Porteau writes to a temporary sibling directory, validates native completion and artifact metadata, then publishes the artifact atomically. On failure or cancellation it removes partial output and temporary credentials.
 
-Backup filters can omit a table entirely with `exclude.tables` or retain its schema without rows with `exclude.data`. Porteau does not create data-only artifacts: every exported object includes the schema required to restore it safely into a new or staging database.
+Restore into a new or staging database and review the disclosed plan before confirming:
 
-Restore always resolves and discloses all three policies before approval. Command flags override YAML, which overrides Porteau's safe defaults (`require-empty`, `reject`, and `disable`):
+```sh
+export PORTEAU_PASSWORD='…'
+porteau restore \
+  --user restore_operator \
+  --artifact ./backups/app-2026-07-21 \
+  --source-database app \
+  --destination-database app_restore
+```
 
-- **Destination:** `require-empty` refuses a populated destination; `allow-existing` permits one.
-- **Overwrite:** `reject` preserves existing tables; `drop`, `truncate`, and `delete` authorize the corresponding destructive treatment. A destructive choice is valid only with `allow-existing`.
-- **Binary log:** `disable` avoids replay logging; `enable` requires destination binlogging to be available. Artifact metadata cannot override this choice.
+Use `porteau <command> --help` for the complete, version-matched option reference.
 
-Use `porteau restore --help` for the current option spellings. Review the rendered plan and confirm interactively. `--yes` approves the exact resolved plan; it does not bypass artifact verification or destination preflight. Automation should normally pass policy flags explicitly so a configuration change cannot alter its intended policy.
+## Restore safety
 
-Press Ctrl-C or cancel a prompt to stop. Porteau forwards cancellation to the native process tree, waits for termination, and cleans partial backup state and temporary credential files. Cancellation is best effort at the database boundary: statements already committed by MySQL during a restore are not rolled back as one transaction. Inspect the destination before retrying.
+Restore resolves three policies from command flags, YAML, or these safe defaults:
 
-## Non-interactive JSONL automation
+| Policy          | Default         | Alternatives                 |
+| --------------- | --------------- | ---------------------------- |
+| Destination     | `require-empty` | `allow-existing`             |
+| Existing tables | `reject`        | `drop`, `truncate`, `delete` |
+| Binary log      | `disable`       | `enable`                     |
 
-Automation must supply the artifact and database inputs, use environment-only credentials, disable prompts, approve the resolved plan, and consume stdout as JSON Lines:
+A destructive existing-table policy is valid only with `allow-existing`. `--yes` approves the disclosed plan; it does not bypass artifact verification or destination preflight. Artifact metadata cannot override the binary-log policy.
+
+Backup filters can omit an object with `exclude.tables` or retain its schema without rows with `exclude.data`. Porteau rejects data-only artifacts because they cannot be restored safely into a new database.
+
+Keep passwords out of command arguments, YAML, shell history, and source control. Prefer `PORTEAU_PASSWORD` supplied by a secret manager. Porteau gives native tools a short-lived defaults file, removes the password from their environment, and cleans the file after execution.
+
+Cancellation is best effort at the database boundary: Porteau terminates the native process tree and cleans local temporary state, but MySQL statements already committed during a restore are not rolled back as one transaction. Inspect the destination before retrying.
+
+## Automation
+
+Use `--json` for JSON Lines on stdout; human diagnostics remain on stderr. JSON mode implies `--no-interactive` and cannot be combined with `--quiet` or `--verbose`.
 
 ```sh
 PORTEAU_PASSWORD="$BACKUP_PASSWORD" porteau backup \
-  --no-interactive --json \
-  --user backup_operator --database app \
+  --json --user backup_operator --database app \
   --output ./backups/app-2026-07-21 >backup.events.jsonl
 
 PORTEAU_PASSWORD="$RESTORE_PASSWORD" porteau restore \
-  --no-interactive --json --yes \
-  --user restore_operator \
+  --json --yes --user restore_operator \
   --artifact ./backups/app-2026-07-21 \
   --source-database app --destination-database app_restore \
   --destination-policy require-empty \
@@ -57,23 +106,35 @@ PORTEAU_PASSWORD="$RESTORE_PASSWORD" porteau restore \
   >restore.events.jsonl
 ```
 
-Check `porteau restore --help` for the installed version. Keep JSONL on stdout machine-readable; send it directly to a parser or durable log. Human diagnostics go to stderr. Treat a nonzero exit or an interrupted/incomplete event stream as failure. Send SIGINT/SIGTERM for cancellation and wait for the command to exit before retrying.
+Treat a nonzero exit or incomplete event stream as failure. Exit codes are `1` for operational failure, `2` for invalid usage, and `130` for cancellation.
 
-`--json` implies non-interactive operation and cannot be combined with human `--quiet`/`--verbose` rendering. `--yes` only records approval where approval is supported; CI still needs complete credentials, artifact selection, and destination inputs.
-
-## Result terminology
-
-- **Artifact-valid** means Porteau completed its atomic publication checks and the backup artifact/manifest is structurally valid. It does **not** prove that every application invariant is correct or that a future restore will work in a different environment.
-- **Operationally verified** means an operator restored the artifact into an isolated, compatible MySQL destination and performed application-specific checks (row counts, checksums, migrations, and representative reads). Only a restore drill can establish this stronger claim.
-
-Retain JSONL and manifest evidence, monitor backup age, and schedule isolated restore drills. Never call an artifact operationally verified solely because backup exited successfully.
+A completed backup is **artifact-valid**: its process, event stream, files, and manifest agreed. It is not operationally verified until it has been restored into an isolated compatible destination and checked with application-specific assertions such as row counts, checksums, migrations, and representative reads.
 
 ## Supported boundaries
 
-- Node.js 22.18 or newer; the committed CI matrix targets Node 22.18 and Node 24 and must pass before release.
-- Supported automatic-installation targets are limited to the Ubuntu releases and architectures listed in [INSTALL.md](INSTALL.md); their committed external matrices must pass before release.
-- MySQL 8.4 with a matching `mydumper`/`myloader` pair at version 1.0.3-1 or newer is the supported integration target. The automatic installer remains pinned to a reviewed release, and its committed guarded round trip must pass before release. Native tools remain external executables and must be diagnosed with `porteau doctor`.
-- Consistent production backup requires InnoDB. Selected nontransactional tables are rejected; system databases are not restore targets. Unsupported TLS certificate configuration and unlisted platforms are not silently accepted.
-- Shell completion is not provided in v1. Citty does not currently expose a stable generated-completion contract, and Porteau will not install an ad-hoc completion script that could drift from safety checks.
+- The committed release matrix targets Node.js 22.18 and 24.
+- Automatic installation is limited to the Ubuntu releases and architectures listed above.
+- The supported integration target is MySQL 8.4 and the reviewed mydumper/myloader contract. Run `doctor` before production use.
+- Nontransactional selected tables and system-database restore destinations are rejected.
+- CA-verified TLS modes are unavailable until certificate-path configuration is implemented.
+- Shell completion and standalone executable packaging are not provided in v1.
 
-Standalone Node 26 executable packaging is **non-blocking/deferred**. Vite+/tsdown executable packaging remains experimental, while `mydumper` and `myloader` must remain external native tools. The supported release artifact is therefore the Node package containing `dist/cli.mjs`, not a standalone binary.
+## Development
+
+Use the same verification entry points as CI:
+
+```sh
+vp run verify           # check, test, build, and package smoke test
+vp run verify:external  # disposable MySQL and installer matrices; requires Docker
+vp run package:dry-run  # package construction only; does not publish
+```
+
+### First alpha release
+
+1. Create the GitHub Environment `npm-release` (no secrets required).
+2. On [npmjs.com](https://www.npmjs.com/), create the `porteau` package ownership and add a Trusted Publisher for this repository, workflow `release.yml`, and environment `npm-release`.
+3. Commit the release surface on `main` (`LICENSE`, workflows, `0.1.0-alpha.0`, regenerated `install.sh`, docs).
+4. Wait for CI to go green on that commit.
+5. Tag and push: `git tag v0.1.0-alpha.0 && git push origin v0.1.0-alpha.0`.
+6. Watch the Release alpha workflow publish `next`, create the GitHub prerelease `install.sh` asset, and smoke the public curl URL.
+7. Only after that workflow is green, treat the README install commands as live.

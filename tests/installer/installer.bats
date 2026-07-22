@@ -3,7 +3,22 @@
 setup() {
   [[ -f /etc/os-release ]] && . /etc/os-release
   [[ "${ID:-}" == ubuntu ]] || skip "installer tests require a disposable Ubuntu container"
-  root="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+  source_root="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+  # apt bats may omit BATS_TEST_TMPDIR; never expand an empty root to /.
+  tmp="${BATS_TEST_TMPDIR:-${BATS_TMPDIR:-}}"
+  if [[ -z "$tmp" || ! -d "$tmp" || ! -w "$tmp" ]]; then
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/porteau-bats.XXXXXX")"
+  fi
+  BATS_TEST_TMPDIR="$tmp"
+  porteau_version="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$source_root/package.json" | head -n 1)"
+  [[ -n "$porteau_version" ]] || {
+    echo 'Unable to read package.json version' >&2
+    return 1
+  }
+  root="$BATS_TEST_TMPDIR/dependencies-only"
+  mkdir -p "$root"
+  printf '#!/bin/sh\nexec bash %q --dependencies-only "$@"\n' "$source_root/install.sh" >"$root/install.sh"
+  chmod +x "$root/install.sh"
   fake="$BATS_TEST_TMPDIR/fake-bin"
   rm -rf "$fake"
   mkdir -p "$fake"
@@ -20,10 +35,29 @@ make_fake() {
 }
 
 compatible() {
-  make_fake node "[ \"\$1\" = -e ] && exit 0; echo v24.0.0"
+  make_fake node "if [ \"\$1\" = -e ]; then case \"\$2\" in *p.name*) printf 'porteau@${porteau_version} dist/cli.mjs';; esac; exit 0; fi; echo v24.0.0"
   make_fake npm 'echo 11.0.0'
   make_fake mydumper 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "mydumper v1.0.3-1, built against MySQL 8.0.0 with SSL support"; fi'
   make_fake myloader 'if [ "$1" = --help ]; then echo --machine-log-json; else echo "myloader v1.0.3-1, built against MySQL 8.0.0 with SSL support"; fi'
+}
+
+fake_porteau_install() {
+  make_fake npm "case \"\$1\" in --version) echo 11.0.0;; view) echo '${porteau_version}';; install) package=\"\$HOME/.local/lib/node_modules/porteau\"; mkdir -p \"\$package/dist\" \"\$HOME/.local/bin\"; printf '{\"name\":\"porteau\",\"version\":\"${porteau_version}\",\"bin\":{\"porteau\":\"dist/cli.mjs\"}}' >\"\$package/package.json\"; printf '#!/bin/sh\\ncase \"\$1\" in --version) echo ${porteau_version};; doctor) exit 0;; *) exit 1;; esac\\n' >\"\$package/dist/cli.mjs\"; chmod +x \"\$package/dist/cli.mjs\"; ln -sf ../lib/node_modules/porteau/dist/cli.mjs \"\$HOME/.local/bin/porteau\";; *) exit 91;; esac"
+}
+
+@test "released installer installs the exact package and verifies an idempotent rerun" {
+  compatible
+  fake_porteau_install
+  make_fake sudo 'exit 99'
+
+  run env HOME="$HOME" PATH="$fake:/usr/bin:/bin" bash "$source_root/install.sh" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Porteau ${porteau_version} and all dependencies installed and verified."* ]]
+
+  make_fake npm 'if [ "$1" = --version ]; then echo 11.0.0; else exit 98; fi'
+  run env HOME="$HOME" PATH="$fake:/usr/bin:/bin" bash "$source_root/install.sh" --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Porteau ${porteau_version} and all dependencies are ready."* ]]
 }
 
 compatible_newer() {
@@ -168,7 +202,7 @@ compatible_newer() {
 
   make_fake sudo 'exit 0'
   run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --yes
-  [ "$status" -eq 1 ]; [[ "$output" == *"Post-install verification failed"* ]]
+  [ "$status" -eq 1 ]; [[ "$output" == *"Post-install dependency verification failed"* ]]
 }
 
 @test "post-install verification rejects supported but mismatched tools" {
@@ -182,5 +216,5 @@ compatible_newer() {
   make_fake sudo "touch '$state'"
   run env PATH="$fake:/usr/bin:/bin" bash "$root/install.sh" --yes
   [ "$status" -eq 1 ]
-  [[ "$output" == *"Post-install verification failed"* ]]
+  [[ "$output" == *"Post-install dependency verification failed"* ]]
 }

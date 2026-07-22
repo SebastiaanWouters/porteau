@@ -8,7 +8,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /work
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg procps sudo && rm -rf /var/lib/apt/lists/*
 COPY install.sh ./
-RUN ./install.sh --yes
+RUN ./install.sh --dependencies-only --yes
 RUN curl -fsSLo /tmp/install-vp.sh "https://raw.githubusercontent.com/voidzero-dev/vite-plus/${VP_INSTALLER_COMMIT}/packages/cli/install.sh" \
     && echo "${VP_INSTALLER_SHA256}  /tmp/install-vp.sh" | sha256sum --check --status \
     && CI=1 VP_NODE_MANAGER=no VP_VERSION="${VP_VERSION}" bash /tmp/install-vp.sh \

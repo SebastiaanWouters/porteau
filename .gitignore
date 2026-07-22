@@ -47,6 +47,10 @@ temp/
 
 # Local backup artifacts
 backups/
+export-*/
+
+# Local agent / sync state
+.amp/
 
 # Editor settings
 .idea/

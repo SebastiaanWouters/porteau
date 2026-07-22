@@ -1,0 +1,68 @@
+name: Qualify external
+
+on:
+  workflow_call:
+    inputs:
+      compose_prefix:
+        description: Docker Compose project name prefix
+        required: true
+        type: string
+      include_mysql:
+        description: Run the MySQL 8.4 guarded round trip
+        required: false
+        type: boolean
+        default: true
+      include_installers:
+        description: Run the Ubuntu installer matrix
+        required: false
+        type: boolean
+        default: true
+      release_test:
+        description: Install the published Porteau package (not dependencies-only)
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  mysql:
+    name: MySQL 8.4 qualification
+    if: inputs.include_mysql
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PORTEAU_COMPOSE_PROJECT: ${{ inputs.compose_prefix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: bash scripts/verify-external.sh mysql
+      - name: Remove integration services and volumes
+        if: always()
+        run: docker compose --project-name "${PORTEAU_COMPOSE_PROJECT}-mysql" -f tests/integration/compose.yaml down -v
+
+  installer:
+    name: Installer ${{ matrix.target }}
+    if: inputs.include_installers
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: Ubuntu 22.04 amd64
+            runner: ubuntu-24.04
+            qualification: ubuntu-2204
+          - target: Ubuntu 24.04 amd64
+            runner: ubuntu-24.04
+            qualification: ubuntu-2404
+          - target: Ubuntu 24.04 arm64
+            runner: ubuntu-24.04-arm
+            qualification: ubuntu-2404-arm64
+    env:
+      PORTEAU_COMPOSE_PROJECT: ${{ inputs.compose_prefix }}
+      PORTEAU_RELEASE_TEST: ${{ inputs.release_test && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: bash scripts/verify-external.sh ${{ matrix.qualification }}

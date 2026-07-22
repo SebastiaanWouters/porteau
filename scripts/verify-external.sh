@@ -52,7 +52,10 @@ installer() {
   fi
   trap cleanup_installer EXIT
   "${compose[@]}" build "$service"
-  "${compose[@]}" run --rm "$service"
+  local run=("${compose[@]}" run --rm)
+  [[ "${PORTEAU_RELEASE_TEST:-0}" == 1 ]] && run+=(-e PORTEAU_RELEASE_TEST=1)
+  [[ -n "${PORTEAU_INSTALL_URL:-}" ]] && run+=(-e "PORTEAU_INSTALL_URL=$PORTEAU_INSTALL_URL")
+  "${run[@]}" "$service"
   cleanup_installer
   trap - EXIT
 }
