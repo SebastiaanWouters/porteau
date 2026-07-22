@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vite-plus/test'
-import { loadConfig, selectedMysqlDatabases } from '../src/core/config.js'
+import { loadConfig } from '../src/core/config.js'
 
 const temporaryDirectories: string[] = []
 
@@ -28,7 +28,6 @@ describe('configuration contract', () => {
     expect(config.databases.app?.name).toBe('app')
     expect(config.artifacts.directory).toBe('./backups')
     expect(config.backup.threads).toBe(4)
-    expect(selectedMysqlDatabases(config)).toEqual(['app'])
   })
 
   it('applies YAML over defaults', async () => {

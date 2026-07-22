@@ -39,7 +39,7 @@ describe('CLI contract', () => {
     const help = output.join('\n')
     for (const option of [
       '--artifact',
-      '--source-database',
+      '--database',
       '--destination-database',
       '--destination-policy',
       '--overwrite-policy',

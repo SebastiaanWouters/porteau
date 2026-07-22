@@ -1,7 +1,8 @@
 import { dirname, resolve } from 'node:path'
 import { defaultServer, overlayDefaultServer } from '../core/config.js'
-import type { RestoreConfirmation } from '../core/restore.js'
-import { abortError, normalizeRequired, promptOrAbort } from './shared.js'
+import { resolveRestoreArtifactPath, type RestoreConfirmation } from '../core/restore.js'
+import { asDatabaseId, effectiveUser, resolveRun, type Selection } from '../core/runtime-config.js'
+import { abortError, normalizeList, normalizeRequired, promptOrAbort } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
 function restoreSummary(summary: RestoreConfirmation): string {
@@ -28,16 +29,16 @@ export const restoreCommand = defineCommand({
     artifact: {
       type: 'string',
       alias: 'a',
-      description: 'Backup artifact directory',
+      description: 'Backup artifact directory (resolved against the config directory)',
     },
     user: { type: 'string', description: 'Destination database user' },
-    'source-database': {
+    database: {
       type: 'string',
-      description: 'Database name stored in the artifact',
+      description: 'Catalog database key for the artifact source (defaults.database when omitted)',
     },
     'destination-database': {
       type: 'string',
-      description: 'Destination database name',
+      description: 'Destination MySQL database name',
     },
     'destination-policy': {
       type: 'string',
@@ -55,6 +56,7 @@ export const restoreCommand = defineCommand({
   async run(context: CommandContext<'loadConfig' | 'runRestore'>) {
     const { values, flags, cwd, env, presentation, prompts, services, signal } = context
     const configFile = values.config ? resolve(cwd, String(values.config)) : undefined
+    const configDirectory = configFile ? dirname(configFile) : cwd
     const restoreFlags = {
       ...(values['destination-policy']
         ? { destinationPolicy: String(values['destination-policy']) }
@@ -74,13 +76,11 @@ export const restoreCommand = defineCommand({
     signal.throwIfAborted()
     const server = defaultServer(config)
     presentation.registerSecret(server.password)
-    let user = server.user,
-      password = server.password,
-      artifact = values.artifact ? String(values.artifact) : undefined,
-      sourceDatabase = values['source-database'] ? String(values['source-database']) : undefined,
-      destinationDatabase = values['destination-database']
-        ? String(values['destination-database'])
-        : undefined
+    let user = server.user
+    let password = server.password
+    let destinationDatabase = values['destination-database']
+      ? String(values['destination-database'])
+      : undefined
     if (user !== undefined) user = normalizeRequired(user, 'Destination database user')
     if (presentation.interactive) {
       if (!user)
@@ -96,43 +96,46 @@ export const restoreCommand = defineCommand({
         )
         presentation.registerSecret(password)
       }
-      if (!artifact)
-        artifact = await promptOrAbort(
-          (abortSignal) => prompts.text('Backup artifact directory', abortSignal),
-          signal,
-        )
-      if (!sourceDatabase)
-        sourceDatabase = await promptOrAbort(
-          (abortSignal) => prompts.text('Source database in artifact', abortSignal),
-          signal,
-        )
       if (!destinationDatabase)
         destinationDatabase = await promptOrAbort(
           (abortSignal) => prompts.text('Destination database', abortSignal),
           signal,
         )
     }
-    if (!user || password === undefined || !artifact || !sourceDatabase || !destinationDatabase)
-      throw new Error(
-        'Restore requires an artifact, source database, destination database, database user, and password',
-      )
-    artifact = normalizeRequired(artifact, 'Backup artifact directory')
-    sourceDatabase = normalizeRequired(sourceDatabase, 'Source database')
+    if (!user || password === undefined || !destinationDatabase)
+      throw new Error('Restore requires a destination database, database user, and password')
     destinationDatabase = normalizeRequired(destinationDatabase, 'Destination database')
     config = overlayDefaultServer(config, { user, password })
     signal.throwIfAborted()
     presentation.registerSecret(defaultServer(config).password)
+
+    const databaseTokens = values.database
+      ? normalizeList(values.database, '--database')
+      : undefined
+    if (databaseTokens !== undefined && databaseTokens.length !== 1)
+      throw new Error('Restore accepts exactly one --database catalog key')
+    const selection: Selection | undefined = databaseTokens
+      ? { databases: [asDatabaseId(databaseTokens[0]!)] }
+      : undefined
+    const run = resolveRun(config, selection, { configDirectory })
+    const loginUser = effectiveUser(run, run.databases[0])
+    if (!loginUser)
+      throw new Error('Restore requires a destination database, database user, and password')
+
+    const artifactPath = await resolveRestoreArtifactPath({
+      artifactsDirectory: run.artifacts.directory,
+      databaseId: run.databases[0].id,
+      ...(values.artifact ? { artifactOverride: String(values.artifact) } : {}),
+      configDirectory,
+    })
+    signal.throwIfAborted()
+
     const result = await services.runRestore({
-      config,
-      request: {
-        artifactPath: resolve(cwd, artifact),
-        sourceDatabase,
-        destinationDatabase,
-        destinationPolicy: config.restore.destinationPolicy,
-        overwritePolicy: config.restore.overwritePolicy,
-        binlogPolicy: config.restore.binlogPolicy,
-      },
-      configDirectory: configFile ? dirname(configFile) : cwd,
+      run,
+      credentials: { user: loginUser, password },
+      artifactPath,
+      destinationDatabase,
+      configDirectory,
       signal,
       environment: env,
       onEvent: (event) => presentation.progress('restore', event),

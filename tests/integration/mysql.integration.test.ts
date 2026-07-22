@@ -56,22 +56,49 @@ function runArgs(
   }
 }
 
-function backupPreflightArgs(cfg: PorteauConfig, databases: readonly string[]) {
+function connectionSlice(cfg: PorteauConfig) {
   const server = defaultServer(cfg)
   return {
-    connection: {
-      host: server.host,
-      port: server.port,
-      ...(server.user !== undefined ? { user: server.user } : {}),
-      ...(server.password !== undefined ? { password: server.password } : {}),
-      tls: server.tls,
-    },
+    host: server.host,
+    port: server.port,
+    ...(server.user !== undefined ? { user: server.user } : {}),
+    ...(server.password !== undefined ? { password: server.password } : {}),
+    tls: server.tls,
+  }
+}
+
+function backupPreflightArgs(cfg: PorteauConfig, databases: readonly string[]) {
+  return {
+    connection: connectionSlice(cfg),
     databases,
     tablePatterns: databases.map((database) => `${database}.*`),
     includeViews: cfg.objects.views,
     includeTriggers: cfg.objects.triggers,
     profile: cfg.backup.profile,
     consistencyMode: cfg.backup.consistency.mode,
+  }
+}
+
+function restoreArgs(
+  cfg: PorteauConfig,
+  extras: {
+    readonly artifactPath: string
+    readonly destinationDatabase: string
+    readonly confirm: () => boolean
+    readonly onEvent?: Parameters<typeof runRestore>[0]['onEvent']
+  },
+) {
+  const server = defaultServer(cfg)
+  if (!server.user || server.password === undefined) {
+    throw new Error('integration config requires user and password')
+  }
+  return {
+    run: resolveRun(cfg, undefined, { configDirectory: process.cwd() }),
+    credentials: { user: server.user, password: server.password },
+    artifactPath: extras.artifactPath,
+    destinationDatabase: extras.destinationDatabase,
+    confirm: extras.confirm,
+    ...(extras.onEvent ? { onEvent: extras.onEvent } : {}),
   }
 }
 
@@ -174,21 +201,16 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     )
     const restoreEvents: string[] = []
     await expect(
-      runRestore({
-        config: backupConfig,
-        request: {
+      runRestore(
+        restoreArgs(backupConfig, {
           artifactPath: output,
-          sourceDatabase: 'safe_app',
           destinationDatabase: 'restored',
-          destinationPolicy: 'require-empty',
-          overwritePolicy: 'reject',
-          binlogPolicy: 'disable',
-        },
-        confirm: () => true,
-        onEvent(event) {
-          restoreEvents.push(`${event.sourceEvent}/${event.sourcePhase}/${event.sourceStatus}`)
-        },
-      }),
+          confirm: () => true,
+          onEvent(event) {
+            restoreEvents.push(`${event.sourceEvent}/${event.sourcePhase}/${event.sourceStatus}`)
+          },
+        }),
+      ),
     ).resolves.toEqual({ destinationDatabase: 'restored', warnings: expect.any(Number) })
     expect(restoreEvents).toEqual(
       expect.arrayContaining(['restore_completed/restore_finish/finished']),
@@ -218,18 +240,13 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     expect((view as { tableType: string }[])[0]!.tableType).toBe('VIEW')
 
     await expect(
-      runRestore({
-        config: backupConfig,
-        request: {
+      runRestore(
+        restoreArgs(backupConfig, {
           artifactPath: output,
-          sourceDatabase: 'safe_app',
           destinationDatabase: 'restored',
-          destinationPolicy: 'require-empty',
-          overwritePolicy: 'reject',
-          binlogPolicy: 'disable',
-        },
-        confirm: () => true,
-      }),
+          confirm: () => true,
+        }),
+      ),
     ).rejects.toThrow(/not empty/u)
   }, 90_000)
 
@@ -315,7 +332,7 @@ suite('Porteau against pinned MySQL and mydumper', () => {
     ).rejects.toThrow(/auto strategy: SELECT/u)
     await expect(
       runRestorePreflight({
-        config: partialConfig,
+        connection: connectionSlice(partialConfig),
         destinationDatabase: 'safe_app',
         destinationPolicy: 'allow-existing',
         overwritePolicy: 'reject',

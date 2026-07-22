@@ -1,20 +1,13 @@
-import { defaultServer, type PorteauConfig } from './config.js'
+import { readdir } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { createCredentialsDefaultsFile } from './credentials.js'
 import type { ConnectionFactory } from './database.js'
 import type { EngineEvent } from './events.js'
 import { runMachineTool } from './mydumper.js'
 import { runRestorePreflight, type RestorePreflightReport } from './preflight.js'
+import { type ConnectionCredentials, type DatabaseId, type ResolvedRun } from './runtime-config.js'
 import { assertMatchingToolVersions, inspectTool, resolveTool } from './tools.js'
 import { verifyRestoreArtifact } from './artifact.js'
-
-export interface RestoreRequest {
-  readonly artifactPath: string
-  readonly sourceDatabase: string
-  readonly destinationDatabase: string
-  readonly destinationPolicy: 'require-empty' | 'allow-existing'
-  readonly overwritePolicy: 'reject' | 'drop' | 'truncate' | 'delete'
-  readonly binlogPolicy: 'disable' | 'enable'
-}
 
 export interface RestoreConfirmation {
   readonly host: string
@@ -23,9 +16,9 @@ export interface RestoreConfirmation {
   readonly destinationDatabase: string
   readonly destinationExists: boolean
   readonly destinationObjects: number
-  readonly destinationPolicy: RestoreRequest['destinationPolicy']
-  readonly overwritePolicy: RestoreRequest['overwritePolicy']
-  readonly binlogPolicy: RestoreRequest['binlogPolicy']
+  readonly destinationPolicy: ResolvedRun['restore']['destinationPolicy']
+  readonly overwritePolicy: ResolvedRun['restore']['overwritePolicy']
+  readonly binlogPolicy: ResolvedRun['restore']['binlogPolicy']
 }
 
 export interface RestoreResult {
@@ -34,8 +27,12 @@ export interface RestoreResult {
 }
 
 export interface RunRestoreOptions {
-  readonly config: PorteauConfig
-  readonly request: RestoreRequest
+  readonly run: ResolvedRun
+  readonly credentials: ConnectionCredentials
+  /** Absolute artifact directory. */
+  readonly artifactPath: string
+  /** Explicit MySQL destination name (rename path). */
+  readonly destinationDatabase: string
   readonly configDirectory?: string
   readonly signal?: AbortSignal
   readonly onEvent?: (event: EngineEvent) => void
@@ -47,9 +44,59 @@ export interface RunRestoreOptions {
   readonly environment?: NodeJS.ProcessEnv
 }
 
+const CANDIDATE_LIST_LIMIT = 10
+
+/**
+ * Resolve the restore artifact directory.
+ * `--artifact` wins and is resolved against configDirectory when relative.
+ * Otherwise auto-pick under artifacts root when exactly one `{databaseId}-*` match exists.
+ */
+export async function resolveRestoreArtifactPath(options: {
+  readonly artifactsDirectory: string
+  readonly databaseId: DatabaseId | string
+  readonly artifactOverride?: string
+  readonly configDirectory: string
+}): Promise<string> {
+  if (options.artifactOverride !== undefined) {
+    const trimmed = options.artifactOverride.trim()
+    if (trimmed === '') throw new Error('Backup artifact directory must not be empty')
+    return resolve(options.configDirectory, trimmed)
+  }
+
+  let names: string[]
+  try {
+    const entries = await readdir(options.artifactsDirectory, { withFileTypes: true })
+    const prefix = `${options.databaseId}-`
+    names = entries
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
+      .map((entry) => entry.name)
+      .sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    names = []
+  }
+
+  if (names.length === 1) return join(options.artifactsDirectory, names[0]!)
+
+  const root = options.artifactsDirectory
+  if (names.length === 0) {
+    throw new Error(
+      `No restore artifact matched "${options.databaseId}-*" under ${root}. Pass --artifact explicitly.`,
+    )
+  }
+  const listed =
+    names.length <= CANDIDATE_LIST_LIMIT
+      ? names.map((name) => join(root, name)).join(', ')
+      : `${names.length} matches`
+  throw new Error(
+    `Ambiguous restore artifact for "${options.databaseId}" under ${root}: ${listed}. Pass --artifact explicitly.`,
+  )
+}
+
 function restoreArguments(
-  config: PorteauConfig,
-  request: RestoreRequest,
+  run: ResolvedRun,
+  sourceDatabase: string,
+  destinationDatabase: string,
   defaultsFile: string,
   artifactPath: string,
   preflight: RestorePreflightReport,
@@ -64,14 +111,14 @@ function restoreArguments(
     `--defaults-file=${defaultsFile}`,
     '--machine-log-json',
     `--directory=${artifactPath}`,
-    `--source-db=${request.sourceDatabase}`,
-    `--database=${request.destinationDatabase}`,
-    `--threads=${config.restore.threads}`,
-    `--drop-table=${overwrite[request.overwritePolicy]}`,
+    `--source-db=${sourceDatabase}`,
+    `--database=${destinationDatabase}`,
+    `--threads=${run.restore.threads}`,
+    `--drop-table=${overwrite[run.restore.overwritePolicy]}`,
     '--checksum=WARN',
     '--optimize-keys=AFTER_IMPORT_PER_TABLE',
     ...(preflight.destination.exists ? ['--skip-create-database'] : []),
-    ...(request.binlogPolicy === 'enable' ? ['--enable-binlog'] : []),
+    ...(run.restore.binlogPolicy === 'enable' ? ['--enable-binlog'] : []),
   ]
 }
 
@@ -94,12 +141,10 @@ async function confirmRestore(
 }
 
 export async function runRestore(options: RunRestoreOptions): Promise<RestoreResult> {
-  const { config, request } = options
-  const server = defaultServer(config)
-  if (!server.user || server.password === undefined)
-    throw new Error('Non-interactive restore requires a database user and password')
-  if (request.sourceDatabase === '' || request.destinationDatabase === '')
-    throw new Error('Restore requires explicit source and destination databases')
+  const { run, credentials } = options
+  const sourceDatabase = run.databases[0].name
+  if (options.destinationDatabase === '')
+    throw new Error('Restore requires an explicit destination database')
 
   const cwd = options.configDirectory ?? process.cwd()
   const environment = options.environment ?? process.env
@@ -107,42 +152,44 @@ export async function runRestore(options: RunRestoreOptions): Promise<RestoreRes
   delete childEnvironment.PORTEAU_PASSWORD
 
   // Establish structural artifact safety before any destination connection or mutation.
-  const artifact = await verifyRestoreArtifact(
-    request.artifactPath,
-    request.sourceDatabase,
-    options.signal,
-  )
+  const artifact = await verifyRestoreArtifact(options.artifactPath, sourceDatabase, options.signal)
   const mydumperPath = await resolveTool('mydumper', {
     env: environment,
-    ...(config.tools.mydumper ? { configPath: config.tools.mydumper } : {}),
+    ...(run.tools.mydumper ? { configPath: run.tools.mydumper } : {}),
     cwd,
     ...(options.signal ? { signal: options.signal } : {}),
   })
   const myloaderPath = await resolveTool('myloader', {
     env: environment,
-    ...(config.tools.myloader ? { configPath: config.tools.myloader } : {}),
+    ...(run.tools.myloader ? { configPath: run.tools.myloader } : {}),
     cwd,
     ...(options.signal ? { signal: options.signal } : {}),
   })
   const preflight = await runRestorePreflight({
-    config,
-    destinationDatabase: request.destinationDatabase,
-    destinationPolicy: request.destinationPolicy,
-    overwritePolicy: request.overwritePolicy,
-    binlogPolicy: request.binlogPolicy,
+    connection: {
+      host: run.server.host,
+      port: run.server.port,
+      user: credentials.user,
+      password: credentials.password,
+      tls: run.server.tls,
+    },
+    destinationDatabase: options.destinationDatabase,
+    destinationPolicy: run.restore.destinationPolicy,
+    overwritePolicy: run.restore.overwritePolicy,
+    binlogPolicy: run.restore.binlogPolicy,
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.connectionFactory ? { connectionFactory: options.connectionFactory } : {}),
   })
   const approved = await confirmRestore(options, {
-    host: server.host,
-    port: server.port,
-    sourceDatabase: request.sourceDatabase,
-    destinationDatabase: request.destinationDatabase,
+    host: run.server.host,
+    port: run.server.port,
+    sourceDatabase,
+    destinationDatabase: options.destinationDatabase,
     destinationExists: preflight.destination.exists,
     destinationObjects: preflight.destination.objects,
-    destinationPolicy: request.destinationPolicy,
-    overwritePolicy: request.overwritePolicy,
-    binlogPolicy: request.binlogPolicy,
+    destinationPolicy: run.restore.destinationPolicy,
+    overwritePolicy: run.restore.overwritePolicy,
+    binlogPolicy: run.restore.binlogPolicy,
   })
   if (!approved) throw new Error('Restore cancelled before destination mutation')
   options.signal?.throwIfAborted()
@@ -154,12 +201,12 @@ export async function runRestore(options: RunRestoreOptions): Promise<RestoreRes
   options.signal?.throwIfAborted()
   assertMatchingToolVersions(mydumper, myloader)
 
-  const credentials = await createCredentialsDefaultsFile({
-    host: server.host,
-    port: server.port,
-    user: server.user,
-    password: server.password,
-    tls: server.tls,
+  const credentialsFile = await createCredentialsDefaultsFile({
+    host: run.server.host,
+    port: run.server.port,
+    user: credentials.user,
+    password: credentials.password,
+    tls: run.server.tls,
   })
   const events: EngineEvent[] = []
   let result: RestoreResult | undefined
@@ -169,7 +216,14 @@ export async function runRestore(options: RunRestoreOptions): Promise<RestoreRes
     options.signal?.throwIfAborted()
     const outcome = await runMachineTool({
       executable: myloaderPath,
-      args: restoreArguments(config, request, credentials.path, artifact.rootPath, preflight),
+      args: restoreArguments(
+        run,
+        sourceDatabase,
+        options.destinationDatabase,
+        credentialsFile.path,
+        artifact.rootPath,
+        preflight,
+      ),
       tool: 'myloader',
       env: childEnvironment,
       ...(options.signal ? { signal: options.signal } : {}),
@@ -194,14 +248,14 @@ export async function runRestore(options: RunRestoreOptions): Promise<RestoreRes
     if (!Number.isSafeInteger(Number(completion.files)))
       throw new Error('Myloader reported an invalid file count')
     result = {
-      destinationDatabase: request.destinationDatabase,
+      destinationDatabase: options.destinationDatabase,
       warnings: Number(completion.warnings),
     }
   } catch (error) {
     failure = error
   } finally {
     try {
-      await credentials.cleanup()
+      await credentialsFile.cleanup()
     } catch (error) {
       cleanupFailure = error
     }

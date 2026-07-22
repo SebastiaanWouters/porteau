@@ -60,7 +60,7 @@ export PORTEAU_PASSWORD='…'
 porteau restore \
   --user restore_operator \
   --artifact ./backups/app-2026-07-21 \
-  --source-database app \
+  --database app \
   --destination-database app_restore
 ```
 
@@ -96,7 +96,7 @@ PORTEAU_PASSWORD="$BACKUP_PASSWORD" porteau backup \
 PORTEAU_PASSWORD="$RESTORE_PASSWORD" porteau restore \
   --json --yes --user restore_operator \
   --artifact ./backups/app-2026-07-21 \
-  --source-database app --destination-database app_restore \
+  --database app --destination-database app_restore \
   --destination-policy require-empty \
   --overwrite-policy reject --binlog-policy disable \
   >restore.events.jsonl

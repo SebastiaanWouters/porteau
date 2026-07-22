@@ -40,6 +40,17 @@ function backupPreflightArgs(
   }
 }
 
+function restoreConnection(cfg: PorteauConfig = config) {
+  const server = defaultServer(cfg)
+  return {
+    host: server.host,
+    port: server.port,
+    ...(server.user !== undefined ? { user: server.user } : {}),
+    ...(server.password !== undefined ? { password: server.password } : {}),
+    tls: server.tls,
+  }
+}
+
 type Responses = {
   databases?: readonly unknown[]
   tables?: readonly unknown[]
@@ -491,7 +502,7 @@ describe('destination restore preflight', () => {
       const state = destination(0, exists)
       await expect(
         runRestorePreflight({
-          config,
+          connection: restoreConnection(),
           destinationDatabase: 'restored',
           destinationPolicy: 'require-empty',
           overwritePolicy: 'reject',
@@ -513,7 +524,7 @@ describe('destination restore preflight', () => {
     const nonempty = destination(2)
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -524,7 +535,7 @@ describe('destination restore preflight', () => {
     expect(nonempty.ended()).toBe(1)
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'drop',
@@ -538,7 +549,7 @@ describe('destination restore preflight', () => {
     const state = destination(2)
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'allow-existing',
         overwritePolicy: 'truncate',
@@ -552,7 +563,7 @@ describe('destination restore preflight', () => {
     const malformed = destination('not-a-count')
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -564,7 +575,7 @@ describe('destination restore preflight', () => {
     const disabled = destination(0, true, { sessionLogBin: false })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -576,7 +587,7 @@ describe('destination restore preflight', () => {
     const globallyDisabled = destination(0, true, { globalLogBin: false })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -590,7 +601,7 @@ describe('destination restore preflight', () => {
     const ineffective = destination(0, true, { disableEffective: false })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -602,7 +613,7 @@ describe('destination restore preflight', () => {
     const rejected = destination(0, true, { rejectDisable: true })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -616,7 +627,7 @@ describe('destination restore preflight', () => {
     })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -630,7 +641,7 @@ describe('destination restore preflight', () => {
     })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -647,7 +658,7 @@ describe('destination restore preflight', () => {
 
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'scone_preview',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -662,7 +673,7 @@ describe('destination restore preflight', () => {
       'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION'
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -674,7 +685,7 @@ describe('destination restore preflight', () => {
 
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -696,7 +707,7 @@ describe('destination restore preflight', () => {
       let connected = false
       await expect(
         runRestorePreflight({
-          config,
+          connection: restoreConnection(),
           destinationDatabase,
           destinationPolicy: 'require-empty',
           overwritePolicy: 'reject',

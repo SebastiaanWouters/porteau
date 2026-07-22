@@ -175,36 +175,12 @@ export function defaultServer(config: PorteauConfig): ServerConfig {
   return config.servers[config.defaults.server]!
 }
 
-export function defaultDatabase(config: PorteauConfig): DatabaseConfig {
-  return config.databases[config.defaults.database]!
-}
-
 export function overlayDefaultServer(
   config: PorteauConfig,
   fields: Partial<ServerConfig>,
 ): PorteauConfig {
   return applyConfigOverlay(config, {
     servers: { [config.defaults.server]: fields },
-  })
-}
-
-/**
- * Resolve MySQL database names for backup/restore until phase 5 selection lands.
- * Overrides may be catalog keys or MySQL names (`databases.*.name`).
- */
-export function selectedMysqlDatabases(
-  config: PorteauConfig,
-  overrideKeysOrNames?: readonly string[],
-): string[] {
-  if (overrideKeysOrNames === undefined || overrideKeysOrNames.length === 0) {
-    return [defaultDatabase(config).name]
-  }
-  return overrideKeysOrNames.map((token) => {
-    const byKey = config.databases[token]
-    if (byKey) return byKey.name
-    const byName = Object.values(config.databases).find((entry) => entry.name === token)
-    if (byName) return byName.name
-    return token
   })
 }
 

@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vite-plus/test'
 import { defaultConfig, type PorteauConfig } from '../src/core/config.js'
 import type { QueryConnection } from '../src/core/database.js'
-import type { RestoreRequest } from '../src/core/restore.js'
-import { runRestore } from '../src/core/restore.js'
+import { resolveRestoreArtifactPath, runRestore } from '../src/core/restore.js'
+import { resolveRun, type ResolvedRun } from '../src/core/runtime-config.js'
 
 const fixture = fileURLToPath(new URL('./fixtures/subprocess.mjs', import.meta.url))
 const directories: string[] = []
@@ -29,7 +29,7 @@ async function workspace() {
   return { cwd, artifact }
 }
 
-function config(): PorteauConfig {
+function config(overrides: Partial<PorteauConfig> = {}): PorteauConfig {
   return {
     ...defaultConfig,
     servers: {
@@ -39,19 +39,16 @@ function config(): PorteauConfig {
         password: 'secret',
       },
     },
+    ...overrides,
   } as PorteauConfig
 }
 
-function request(artifactPath: string, overrides: Partial<RestoreRequest> = {}): RestoreRequest {
-  return {
-    artifactPath,
-    sourceDatabase: 'app',
-    destinationDatabase: 'restored',
-    destinationPolicy: 'require-empty',
-    overwritePolicy: 'reject',
-    binlogPolicy: 'disable',
-    ...overrides,
-  }
+function runFor(
+  cwd: string,
+  overrides: Partial<PorteauConfig> = {},
+  selection?: Parameters<typeof resolveRun>[1],
+): ResolvedRun {
+  return resolveRun(config(overrides), selection, { configDirectory: cwd })
 }
 
 function connection(objects = 0, exists = true): QueryConnection {
@@ -81,14 +78,47 @@ function environment(cwd: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
 }
 
 describe('guarded restore service', () => {
-  it('rejects an empty source database before inspecting the artifact', async () => {
+  it('rejects an empty destination database before inspecting the artifact', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-empty-'))
+    directories.push(cwd)
     await expect(
       runRestore({
-        config: config(),
-        request: request('/unused', { sourceDatabase: '' }),
+        run: runFor(cwd),
+        credentials: { user: 'restore', password: 'secret' },
+        artifactPath: '/unused',
+        destinationDatabase: '',
         confirm: () => true,
       }),
-    ).rejects.toThrow('Restore requires explicit source and destination databases')
+    ).rejects.toThrow('Restore requires an explicit destination database')
+  })
+
+  it('maps catalog database name to myloader --source-db', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-catalog-'))
+    directories.push(cwd)
+    await symlink(fixture, join(cwd, 'mydumper'))
+    await symlink(fixture, join(cwd, 'myloader'))
+    const artifact = join(cwd, 'artifact')
+    await mkdir(artifact)
+    await writeFile(join(artifact, 'metadata'), '[`shop_prod`.`users`]\nrows = 1\n')
+    await writeFile(join(artifact, 'shop_prod-schema-create.sql'), 'CREATE DATABASE shop_prod;')
+    await writeFile(join(artifact, 'shop_prod.users-schema.sql'), 'CREATE TABLE users (id INT);')
+    await writeFile(join(artifact, 'shop_prod.users.00000.sql'), 'INSERT INTO users VALUES (1);')
+    const invocation = join(cwd, 'invocation.json')
+    await runRestore({
+      run: runFor(cwd, {
+        defaults: { server: 'local', database: 'shop' },
+        databases: { shop: { name: 'shop_prod' } },
+      }),
+      credentials: { user: 'restore', password: 'secret' },
+      artifactPath: artifact,
+      destinationDatabase: 'restored',
+      configDirectory: cwd,
+      environment: environment(cwd, { PORTEAU_FIXTURE_INVOCATION: invocation }),
+      connectionFactory: async () => connection(),
+      confirm: () => true,
+    })
+    const args = JSON.parse(await readFile(invocation, 'utf8')) as string[]
+    expect(args).toEqual(expect.arrayContaining(['--source-db=shop_prod', '--database=restored']))
   })
 
   it('verifies, preflights, confirms, uses protected flags, and requires completion agreement', async () => {
@@ -97,8 +127,10 @@ describe('guarded restore service', () => {
     const summaries: unknown[] = []
     await expect(
       runRestore({
-        config: config(),
-        request: request(artifact),
+        run: runFor(cwd),
+        credentials: { user: 'restore', password: 'secret' },
+        artifactPath: artifact,
+        destinationDatabase: 'restored',
         configDirectory: cwd,
         environment: environment(cwd, { PORTEAU_FIXTURE_INVOCATION: invocation }),
         connectionFactory: async () => connection(),
@@ -110,6 +142,7 @@ describe('guarded restore service', () => {
     ).resolves.toEqual({ destinationDatabase: 'restored', warnings: 0 })
     expect(summaries).toEqual([
       expect.objectContaining({
+        sourceDatabase: 'app',
         destinationDatabase: 'restored',
         destinationExists: true,
         destinationObjects: 0,
@@ -141,8 +174,10 @@ describe('guarded restore service', () => {
     let connected = false
     await expect(
       runRestore({
-        config: config(),
-        request: request(artifact),
+        run: runFor(cwd),
+        credentials: { user: 'restore', password: 'secret' },
+        artifactPath: artifact,
+        destinationDatabase: 'restored',
         configDirectory: cwd,
         environment: environment(cwd),
         connectionFactory: async () => {
@@ -160,8 +195,10 @@ describe('guarded restore service', () => {
       connected = false
       await expect(
         runRestore({
-          config: config(),
-          request: request(unsafe.artifact),
+          run: runFor(unsafe.cwd),
+          credentials: { user: 'restore', password: 'secret' },
+          artifactPath: unsafe.artifact,
+          destinationDatabase: 'restored',
           configDirectory: unsafe.cwd,
           environment: environment(unsafe.cwd),
           connectionFactory: async () => {
@@ -179,8 +216,10 @@ describe('guarded restore service', () => {
     connected = false
     await expect(
       runRestore({
-        config: config(),
-        request: request(incomplete.artifact),
+        run: runFor(incomplete.cwd),
+        credentials: { user: 'restore', password: 'secret' },
+        artifactPath: incomplete.artifact,
+        destinationDatabase: 'restored',
         configDirectory: incomplete.cwd,
         environment: environment(incomplete.cwd),
         connectionFactory: async () => {
@@ -199,8 +238,10 @@ describe('guarded restore service', () => {
     const versions = join(cwd, 'version-invocation')
     await expect(
       runRestore({
-        config: config(),
-        request: request(artifact),
+        run: runFor(cwd),
+        credentials: { user: 'restore', password: 'secret' },
+        artifactPath: artifact,
+        destinationDatabase: 'restored',
         configDirectory: cwd,
         environment: environment(cwd, {
           PORTEAU_FIXTURE_INVOCATION: invocation,
@@ -224,8 +265,10 @@ describe('guarded restore service', () => {
       confirmationStarted = resolve
     })
     const pending = runRestore({
-      config: config(),
-      request: request(artifact),
+      run: runFor(cwd),
+      credentials: { user: 'restore', password: 'secret' },
+      artifactPath: artifact,
+      destinationDatabase: 'restored',
       configDirectory: cwd,
       signal: controller.signal,
       environment: environment(cwd, { PORTEAU_FIXTURE_VERSION_INVOCATION: versions }),
@@ -267,8 +310,10 @@ describe('guarded restore service', () => {
     const invocation = join(cwd, 'invocation.json')
     await expect(
       runRestore({
-        config: config(),
-        request: request(artifact),
+        run: runFor(cwd),
+        credentials: { user: 'restore', password: 'secret' },
+        artifactPath: artifact,
+        destinationDatabase: 'restored',
         configDirectory: cwd,
         environment: environment(cwd, { PORTEAU_FIXTURE_INVOCATION: invocation, ...extra }),
         connectionFactory: async () => connection(),
@@ -286,8 +331,10 @@ describe('guarded restore service', () => {
     const controller = new AbortController()
     await expect(
       runRestore({
-        config: config(),
-        request: request(artifact),
+        run: runFor(cwd),
+        credentials: { user: 'restore', password: 'secret' },
+        artifactPath: artifact,
+        destinationDatabase: 'restored',
         configDirectory: cwd,
         signal: controller.signal,
         environment: environment(cwd, {
@@ -308,12 +355,17 @@ describe('guarded restore service', () => {
     const { cwd, artifact } = await workspace()
     const invocation = join(cwd, 'invocation.json')
     await runRestore({
-      config: config(),
-      request: request(artifact, {
-        destinationPolicy: 'allow-existing',
-        overwritePolicy: 'drop',
-        binlogPolicy: 'enable',
+      run: runFor(cwd, {
+        restore: {
+          ...defaultConfig.restore,
+          destinationPolicy: 'allow-existing',
+          overwritePolicy: 'drop',
+          binlogPolicy: 'enable',
+        },
       }),
+      credentials: { user: 'restore', password: 'secret' },
+      artifactPath: artifact,
+      destinationDatabase: 'restored',
       configDirectory: cwd,
       environment: environment(cwd, { PORTEAU_FIXTURE_INVOCATION: invocation }),
       connectionFactory: async () => connection(1),
@@ -321,5 +373,76 @@ describe('guarded restore service', () => {
     })
     const args = JSON.parse(await readFile(invocation, 'utf8')) as string[]
     expect(args).toEqual(expect.arrayContaining(['--drop-table=DROP', '--enable-binlog']))
+  })
+})
+
+describe('resolveRestoreArtifactPath', () => {
+  it('resolves an explicit artifact against configDirectory', async () => {
+    const configDirectory = await mkdtemp(join(tmpdir(), 'porteau-artifact-base-'))
+    directories.push(configDirectory)
+    const artifactsDirectory = join(configDirectory, 'backups')
+    await mkdir(artifactsDirectory)
+    await expect(
+      resolveRestoreArtifactPath({
+        artifactsDirectory,
+        databaseId: 'app',
+        artifactOverride: './backups/app-2026-07-21',
+        configDirectory,
+      }),
+    ).resolves.toBe(join(configDirectory, 'backups', 'app-2026-07-21'))
+  })
+
+  it('auto-picks a single matching artifact under the artifacts root', async () => {
+    const configDirectory = await mkdtemp(join(tmpdir(), 'porteau-artifact-one-'))
+    directories.push(configDirectory)
+    const artifactsDirectory = join(configDirectory, 'backups')
+    await mkdir(join(artifactsDirectory, 'app-2026-07-21'), { recursive: true })
+    await expect(
+      resolveRestoreArtifactPath({
+        artifactsDirectory,
+        databaseId: 'app',
+        configDirectory,
+      }),
+    ).resolves.toBe(join(artifactsDirectory, 'app-2026-07-21'))
+  })
+
+  it('refuses zero or multiple matches and requires --artifact', async () => {
+    const configDirectory = await mkdtemp(join(tmpdir(), 'porteau-artifact-many-'))
+    directories.push(configDirectory)
+    const artifactsDirectory = join(configDirectory, 'backups')
+    await mkdir(artifactsDirectory)
+    await expect(
+      resolveRestoreArtifactPath({
+        artifactsDirectory,
+        databaseId: 'app',
+        configDirectory,
+      }),
+    ).rejects.toThrow(/No restore artifact matched/)
+
+    await mkdir(join(artifactsDirectory, 'app-2026-07-20'))
+    await mkdir(join(artifactsDirectory, 'app-2026-07-21'))
+    await expect(
+      resolveRestoreArtifactPath({
+        artifactsDirectory,
+        databaseId: 'app',
+        configDirectory,
+      }),
+    ).rejects.toThrow(/Ambiguous restore artifact/)
+  })
+
+  it('lets an explicit --artifact win over auto-pick candidates', async () => {
+    const configDirectory = await mkdtemp(join(tmpdir(), 'porteau-artifact-win-'))
+    directories.push(configDirectory)
+    const artifactsDirectory = join(configDirectory, 'backups')
+    await mkdir(join(artifactsDirectory, 'app-2026-07-20'), { recursive: true })
+    await mkdir(join(artifactsDirectory, 'app-2026-07-21'), { recursive: true })
+    await expect(
+      resolveRestoreArtifactPath({
+        artifactsDirectory,
+        databaseId: 'app',
+        artifactOverride: 'backups/app-2026-07-21',
+        configDirectory,
+      }),
+    ).resolves.toBe(join(configDirectory, 'backups', 'app-2026-07-21'))
   })
 })

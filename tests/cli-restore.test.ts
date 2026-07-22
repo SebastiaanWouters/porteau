@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vite-plus/test'
@@ -23,7 +23,7 @@ describe('guarded restore CLI', () => {
     binlogPolicy: 'disable' as const,
   }
 
-  it('maps explicit policies, discloses the plan, and emits a JSON result for approved automation', async () => {
+  it('maps catalog key, policies, discloses the plan, and emits a JSON result for approved automation', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-cli-'))
     roots.push(cwd)
     const output: string[] = []
@@ -34,9 +34,10 @@ describe('guarded restore CLI', () => {
         await options.confirm(
           {
             ...summary,
-            destinationPolicy: options.request.destinationPolicy,
-            overwritePolicy: options.request.overwritePolicy,
-            binlogPolicy: options.request.binlogPolicy,
+            sourceDatabase: options.run.databases[0].name,
+            destinationPolicy: options.run.restore.destinationPolicy,
+            overwritePolicy: options.run.restore.overwritePolicy,
+            binlogPolicy: options.run.restore.binlogPolicy,
           },
           options.signal,
         ),
@@ -53,7 +54,7 @@ describe('guarded restore CLI', () => {
           './artifact',
           '--user',
           'restore',
-          '--source-database',
+          '--database',
           'app',
           '--destination-database',
           'restored',
@@ -71,14 +72,15 @@ describe('guarded restore CLI', () => {
         services: { runRestore },
       }),
     ).toBe(0)
-    expect(received!.request).toEqual({
-      artifactPath: join(cwd, 'artifact'),
-      sourceDatabase: 'app',
-      destinationDatabase: 'restored',
+    expect(received!.artifactPath).toBe(join(cwd, 'artifact'))
+    expect(received!.destinationDatabase).toBe('restored')
+    expect(received!.run.databases[0]).toMatchObject({ id: 'app', name: 'app' })
+    expect(received!.run.restore).toMatchObject({
       destinationPolicy: 'allow-existing',
       overwritePolicy: 'drop',
       binlogPolicy: 'enable',
     })
+    expect(received!.credentials).toEqual({ user: 'restore', password: 'restore-secret' })
     const records = output.map((line) => JSON.parse(line))
     expect(records).toEqual([
       expect.objectContaining({
@@ -92,6 +94,146 @@ describe('guarded restore CLI', () => {
       }),
     ])
     expect(output.join('\n')).not.toContain('restore-secret')
+  })
+
+  it('resolves relative --artifact against the config directory, not process cwd', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'porteau-restore-configdir-'))
+    roots.push(root)
+    const configDir = join(root, 'etc')
+    await mkdir(configDir)
+    const configFile = join(configDir, 'porteau.yaml')
+    await writeFile(
+      configFile,
+      [
+        'servers:',
+        '  local:',
+        '    user: restore',
+        'databases:',
+        '  app:',
+        '    name: app',
+        'artifacts:',
+        '  directory: ./backups',
+        '',
+      ].join('\n'),
+    )
+    let received: Parameters<CliServices['runRestore']>[0]
+    expect(
+      await executeCli({
+        args: [
+          'restore',
+          '--json',
+          '--yes',
+          '--config',
+          configFile,
+          '--artifact',
+          './backups/app-2026-07-21',
+          '--destination-database',
+          'restored',
+        ],
+        cwd: root,
+        env: { PORTEAU_PASSWORD: 'restore-secret' },
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        services: {
+          runRestore: async (options) => {
+            received = options
+            return { destinationDatabase: 'restored', warnings: 0 }
+          },
+        },
+      }),
+    ).toBe(0)
+    expect(received!.artifactPath).toBe(join(configDir, 'backups', 'app-2026-07-21'))
+    expect(received!.run.artifacts.directory).toBe(join(configDir, 'backups'))
+  })
+
+  it('auto-picks a single artifact under artifacts.directory when --artifact is omitted', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-autopick-'))
+    roots.push(cwd)
+    const configFile = join(cwd, 'porteau.yaml')
+    await writeFile(
+      configFile,
+      [
+        'servers:',
+        '  local:',
+        '    user: restore',
+        'databases:',
+        '  app:',
+        '    name: app',
+        'artifacts:',
+        '  directory: ./backups',
+        '',
+      ].join('\n'),
+    )
+    await mkdir(join(cwd, 'backups', 'app-2026-07-21'), { recursive: true })
+    let received: Parameters<CliServices['runRestore']>[0]
+    expect(
+      await executeCli({
+        args: [
+          'restore',
+          '--json',
+          '--yes',
+          '--config',
+          configFile,
+          '--destination-database',
+          'restored',
+        ],
+        cwd,
+        env: { PORTEAU_PASSWORD: 'restore-secret' },
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        services: {
+          runRestore: async (options) => {
+            received = options
+            return { destinationDatabase: 'restored', warnings: 0 }
+          },
+        },
+      }),
+    ).toBe(0)
+    expect(received!.artifactPath).toBe(join(cwd, 'backups', 'app-2026-07-21'))
+  })
+
+  it('refuses ambiguous artifact auto-pick and requires --artifact', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'porteau-restore-ambiguous-'))
+    roots.push(cwd)
+    const configFile = join(cwd, 'porteau.yaml')
+    await writeFile(
+      configFile,
+      [
+        'servers:',
+        '  local:',
+        '    user: restore',
+        'databases:',
+        '  app:',
+        '    name: app',
+        'artifacts:',
+        '  directory: ./backups',
+        '',
+      ].join('\n'),
+    )
+    await mkdir(join(cwd, 'backups', 'app-2026-07-20'), { recursive: true })
+    await mkdir(join(cwd, 'backups', 'app-2026-07-21'), { recursive: true })
+    const runRestore = vi.fn()
+    const output: string[] = []
+    expect(
+      await executeCli({
+        args: [
+          'restore',
+          '--json',
+          '--yes',
+          '--config',
+          configFile,
+          '--destination-database',
+          'restored',
+        ],
+        cwd,
+        env: { PORTEAU_PASSWORD: 'restore-secret' },
+        stdout: (line) => output.push(line),
+        stderr: vi.fn(),
+        services: { runRestore },
+      }),
+    ).toBe(1)
+    expect(runRestore).not.toHaveBeenCalled()
+    expect(output.join('\n')).toMatch(/Ambiguous restore artifact/)
   })
 
   it('applies restore flags over YAML policy values while preserving other YAML policies', async () => {
@@ -122,7 +264,7 @@ describe('guarded restore CLI', () => {
           configFile,
           '--artifact',
           'artifact',
-          '--source-database',
+          '--database',
           'app',
           '--destination-database',
           'restored',
@@ -141,7 +283,7 @@ describe('guarded restore CLI', () => {
         },
       }),
     ).toBe(0)
-    expect(received!.request).toMatchObject({
+    expect(received!.run.restore).toMatchObject({
       destinationPolicy: 'allow-existing',
       overwritePolicy: 'drop',
       binlogPolicy: 'enable',
@@ -161,7 +303,7 @@ describe('guarded restore CLI', () => {
           '--json',
           '--artifact',
           'artifact',
-          '--source-database',
+          '--database',
           'app',
           '--destination-database',
           'restored',
@@ -198,7 +340,7 @@ describe('guarded restore CLI', () => {
           'restore',
           '--artifact',
           'artifact',
-          '--source-database',
+          '--database',
           'app',
           '--destination-database',
           'restored',
