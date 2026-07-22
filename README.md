@@ -20,6 +20,8 @@ Older alphas: download `install.sh` from a [GitHub release](https://github.com/S
 
 ## Quick start
 
+One YAML file names servers, databases, defaults, and a single artifacts root. Runtime `--server` and `--database` pick catalog keys. The MySQL database name lives at `databases.<key>.name`. Passwords stay in the environment or a prompt, never in YAML.
+
 Create a configuration, inspect the effective result, and run the read-only environment diagnostics:
 
 ```sh
@@ -28,19 +30,51 @@ porteau config
 porteau doctor
 ```
 
-Porteau reads `porteau.config.yaml` from the working directory by default. Use `--config <file>` to select another YAML file. Command flags override environment variables, which override YAML and then safe defaults. Supported environment variables are `PORTEAU_HOST`, `PORTEAU_PORT`, `PORTEAU_USER`, `PORTEAU_PASSWORD`, `PORTEAU_MYDUMPER`, and `PORTEAU_MYLOADER`.
+`porteau init` writes the registries essentials. That means `artifacts`, `defaults`, `servers.local`, and `databases.*`. A short multi-server example:
 
-Create a backup:
+```yaml
+artifacts:
+  directory: ./backups
+
+defaults:
+  server: local
+  database: app
+
+servers:
+  local:
+    host: localhost
+    port: 3306
+    user: backup_operator
+  staging:
+    host: staging.example
+    user: restore_operator
+
+databases:
+  app:
+    name: app
+```
+
+Porteau reads `porteau.config.yaml` from the working directory by default. Use `--config <file>` to select another YAML file. Command flags override environment variables, which override YAML and then safe defaults. Supported environment variables are `PORTEAU_HOST`, `PORTEAU_PORT`, `PORTEAU_USER`, `PORTEAU_PASSWORD`, `PORTEAU_MYDUMPER`, and `PORTEAU_MYLOADER`. Connection env vars overlay the default server at load time.
+
+### Backup
+
+With defaults from YAML and a password in the environment:
 
 ```sh
 export PORTEAU_PASSWORD='…'
-porteau backup \
-  --user backup_operator \
-  --database app \
-  --output ./backups/app-2026-07-21
+porteau backup
 ```
 
-The final output directory must not exist. Porteau writes to a temporary sibling directory, validates native completion and artifact metadata, then publishes the artifact atomically. On failure or cancellation it removes partial output and temporary credentials.
+That selects `defaults.server` and `defaults.database`. When `--output` is omitted, the artifact lands at `{artifacts.directory}/{database-key}-{YYYY-MM-DD}` relative to the config directory. The final output directory must not exist. Porteau writes to a temporary sibling, validates native completion and artifact metadata, then publishes atomically. On failure or cancellation it removes partial output and temporary credentials.
+
+Pick a catalog server and database explicitly:
+
+```sh
+export PORTEAU_PASSWORD='…'
+porteau backup --server local --database app
+```
+
+`--database` is the catalog key, not a free-form MySQL name. Credentials from flags or prompts overlay the selected server.
 
 Default backups use mydumper's lock-based consistency strategy and need global privileges. If you only have database-scoped grants, opt into `no-lock`:
 
@@ -53,16 +87,37 @@ backup:
 
 `no-lock` still requires `SELECT` (plus `SHOW VIEW` / `TRIGGER` when those objects are enabled). It does not need `REPLICATION CLIENT`. It does not guarantee a consistent snapshot across concurrent writes.
 
-Restore into a new or staging database and review the disclosed plan before confirming:
+### Restore
+
+Restore into a new or staging database and review the disclosed plan before confirming. `--destination-database` is the MySQL destination name. `--database` still selects the catalog source key used for artifact lookup.
 
 ```sh
 export PORTEAU_PASSWORD='…'
 porteau restore \
-  --user restore_operator \
-  --artifact ./backups/app-2026-07-21 \
+  --destination-database app_restore
+```
+
+When `--artifact` is omitted and exactly one `{database-key}-*` directory exists under the artifacts root, restore uses that match. Pass `--artifact` when the choice is ambiguous or you want a specific path. Relative artifact paths resolve against the config directory.
+
+Cross-server restore uses the same config and a different catalog server:
+
+```sh
+export PORTEAU_PASSWORD='…'
+porteau restore \
+  --server staging \
   --database app \
   --destination-database app_restore
 ```
+
+### Migrating older configs
+
+These top-level keys hard-reject with migration text. Replace them and re-run.
+
+| Old key                         | Use instead                          |
+| ------------------------------- | ------------------------------------ |
+| `connection`                    | `servers` plus `defaults.server`     |
+| `include` / `include.databases` | `databases` plus `defaults.database` |
+| `backup.directory`              | `artifacts.directory`                |
 
 Use `porteau <command> --help` for the complete, version-matched option reference.
 
@@ -91,16 +146,17 @@ Use `--json` for JSON Lines on stdout; human diagnostics remain on stderr. JSON 
 ```sh
 PORTEAU_PASSWORD="$BACKUP_PASSWORD" porteau backup \
   --json --user backup_operator --database app \
-  --output ./backups/app-2026-07-21 >backup.events.jsonl
+  >backup.events.jsonl
 
 PORTEAU_PASSWORD="$RESTORE_PASSWORD" porteau restore \
   --json --yes --user restore_operator \
-  --artifact ./backups/app-2026-07-21 \
   --database app --destination-database app_restore \
   --destination-policy require-empty \
   --overwrite-policy reject --binlog-policy disable \
   >restore.events.jsonl
 ```
+
+Pin `--output` or `--artifact` when the job must not depend on the dated default path or a single auto-picked match.
 
 Treat a nonzero exit or incomplete event stream as failure. Exit codes are `1` for operational failure, `2` for invalid usage, and `130` for cancellation.
 
