@@ -2,7 +2,7 @@
 
 Porteau is a safety-first CLI for consistent MySQL logical backups and restores with `mydumper` and `myloader`. It validates the database and native tools before execution, publishes backup artifacts atomically, and discloses the resolved restore policy before requiring approval to change a destination.
 
-Porteau `0.1.0-alpha.0` is an alpha release. Test backups and restores against disposable databases before production use.
+Porteau `0.1.0-alpha.2` is an alpha release. Test backups and restores against disposable databases before production use.
 
 ## Installation
 
@@ -10,7 +10,7 @@ The installer supports Ubuntu 22.04 amd64 and Ubuntu 24.04 amd64/arm64. It shows
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/sebastiaanwouters/porteau/releases/download/v0.1.0-alpha.0/install.sh | bash
+  https://github.com/sebastiaanwouters/porteau/releases/download/v0.1.0-alpha.2/install.sh | bash
 ```
 
 Porteau is installed without `sudo` under `~/.local`; `sudo` is limited to disclosed system package changes. The native package is checksum-verified, the Node.js repository key is fingerprint-verified, and Porteau is installed at the exact release version with npm lifecycle scripts disabled. The completed installation runs `porteau doctor` and prints PATH guidance when needed.
@@ -19,14 +19,14 @@ For unattended installation:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/sebastiaanwouters/porteau/releases/download/v0.1.0-alpha.0/install.sh |
+  https://github.com/sebastiaanwouters/porteau/releases/download/v0.1.0-alpha.2/install.sh |
   bash -s -- --yes
 ```
 
 On other platforms, install Node.js 22.18 or newer and matching `mydumper`/`myloader` 1.0.3-1 or newer, then install the alpha package:
 
 ```sh
-npm install --global --prefix "$HOME/.local" --ignore-scripts porteau@0.1.0-alpha.0
+npm install --global --prefix "$HOME/.local" --ignore-scripts porteau@0.1.0-alpha.2
 export PATH="$HOME/.local/bin:$PATH"
 porteau doctor
 ```
@@ -128,13 +128,3 @@ vp run verify           # check, test, build, and package smoke test
 vp run verify:external  # disposable MySQL and installer matrices; requires Docker
 vp run package:dry-run  # package construction only; does not publish
 ```
-
-### First alpha release
-
-1. Create the GitHub Environment `npm-release` (no secrets required).
-2. On [npmjs.com](https://www.npmjs.com/), create the `porteau` package ownership and add a Trusted Publisher for this repository, workflow `release.yml`, and environment `npm-release`.
-3. Commit the release surface on `main` (`LICENSE`, workflows, `0.1.0-alpha.0`, regenerated `install.sh`, docs).
-4. Wait for CI to go green on that commit. The release tag validator enforces this mechanically; waiting first avoids a failed tag push.
-5. Tag and push: `git tag v0.1.0-alpha.0 && git push origin v0.1.0-alpha.0`.
-6. Watch the Release alpha workflow publish `next`, create the GitHub prerelease `install.sh` asset, and smoke the public curl URL.
-7. Only after that workflow is green, treat the README install commands as live.
