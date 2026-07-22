@@ -27,7 +27,7 @@
     "generate:install": "tsx scripts/generate-install-script.ts",
     "package:smoke": "node scripts/package-smoke.mjs",
     "porteau": "vp pack && node dist/cli.mjs",
-    "verify": "vp check && vp test && vp pack && vp run package:smoke",
+    "verify": "bash scripts/check-shell.sh && vp check && vp test && vp pack && vp run package:smoke",
     "verify:external": "bash scripts/verify-external.sh",
     "verify:mysql": "bash scripts/verify-external.sh mysql",
     "verify:installers": "bash scripts/verify-external.sh ubuntu-2204 && bash scripts/verify-external.sh ubuntu-2404",

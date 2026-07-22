@@ -2,14 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
-const REQUIRED_CI_CHECK_NAMES = Object.freeze([
-  'Node 22.18.0',
-  'Node 24',
-  'External qualification / MySQL 8.4 qualification',
-  'External qualification / Installer Ubuntu 22.04 amd64',
-  'External qualification / Installer Ubuntu 24.04 amd64',
-  'External qualification / Installer Ubuntu 24.04 arm64',
-])
+const REQUIRED_CI_CHECK_NAMES = Object.freeze(['Node 22.18.0', 'Node 24'])
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8' })

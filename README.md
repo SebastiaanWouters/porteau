@@ -109,7 +109,9 @@ A completed backup is **artifact-valid**: its process, event stream, files, and 
 Use the same verification entry points as CI:
 
 ```sh
-vp run verify           # check, test, build, and package smoke test
-vp run verify:external  # disposable MySQL and installer matrices; requires Docker
+vp run verify           # shellcheck (if installed), check, test, build, package smoke
+vp run verify:external  # optional Docker MySQL + installer matrices
 vp run package:dry-run  # package construction only; does not publish
 ```
+
+Installer behavior is covered in unit tests (`tests/installer.test.ts`). `verify:external` is for disposable end-to-end Docker checks before a release, not the default gate.
