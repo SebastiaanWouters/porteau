@@ -27,3 +27,4 @@ ts	phase	decision	why	evidence	result
 2026-07-22T20:57:00Z	phase-8	Init/config registries confirmed; config redacts all server passwords; committed	Phase 3 already wrote registries template; polish secret registration	ae55925	tests green
 2026-07-22T20:58:09Z	phase-9	README teaches registries, selection, artifacts, migration; committed	Experience-first operator docs for the shipped shape	d1d7d87	vp check green
 2026-07-22T20:58:09Z	verify	Full vp check/test/pack green after phase 9	End-gate predicate for the redesign	local gates	tests green
+2026-07-22T20:58:25Z	pr	Opened PR #4 for config simplification	Hand back for review and babysit CI	https://github.com/SebastiaanWouters/porteau/pull/4	open
