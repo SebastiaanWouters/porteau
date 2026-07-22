@@ -4,8 +4,8 @@ on:
   push:
     tags: ['v*-alpha.*']
 
-permissions:
-  contents: read
+# Least privilege at workflow scope; jobs elevate only what they need.
+permissions: {}
 
 concurrency:
   group: porteau-release
@@ -14,11 +14,13 @@ concurrency:
 jobs:
   package-preflight:
     name: Package preflight
+    if: github.repository == 'SebastiaanWouters/porteau'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
       checks: read
+      actions: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -58,20 +60,25 @@ jobs:
 
   npm-publish:
     name: Publish npm package
+    if: github.repository == 'SebastiaanWouters/porteau'
     needs: [package-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Match this name on npm Trusted Publishers. Prefer required reviewers on the environment.
+    environment: npm-release
     permissions:
       contents: read
       id-token: write
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: porteau-release-candidate
@@ -81,9 +88,12 @@ jobs:
 
   registry-installer:
     name: Published installer
+    if: github.repository == 'SebastiaanWouters/porteau'
     needs: npm-publish
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
     env:
       PORTEAU_COMPOSE_PROJECT: porteau-published-${{ github.run_id }}-${{ github.run_attempt }}
       PORTEAU_RELEASE_TEST: '1'
@@ -96,11 +106,13 @@ jobs:
 
   github-release:
     name: Publish GitHub prerelease
+    if: github.repository == 'SebastiaanWouters/porteau'
     needs: registry-installer
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -113,10 +125,11 @@ jobs:
       - name: Create or verify the prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/release-publish-github.sh candidate/install.sh
+        run: bash scripts/release-publish-github.sh candidate
 
   public-url-smoke:
     name: Public installer smoke
+    if: github.repository == 'SebastiaanWouters/porteau'
     needs: github-release
     runs-on: ubuntu-24.04
     timeout-minutes: 15

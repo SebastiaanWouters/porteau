@@ -51,7 +51,8 @@ next:
   git add package.json install.sh
   git commit -m "chore: release ${versionArg}"
   git push
-  # wait for required CI checks green on that commit, then:
+  # wait for Node 22.18.0 and Node 24 green on that commit, then:
   git tag -a ${tag} -m "Release ${tag}"
   git push origin ${tag}
+  # never force-move ${tag} after npm has published that version
 `)

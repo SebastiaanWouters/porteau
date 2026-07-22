@@ -102,8 +102,11 @@ if (!/^v\d+\.\d+\.\d+-alpha\.\d+$/u.test(tag))
   throw new Error(`Tag ${tag} is not an alpha release tag`)
 if (tag !== `v${metadata.version}`)
   throw new Error(`Tag ${tag} does not match package.json version ${metadata.version}`)
-if (run('git', ['rev-list', '-n', '1', tag]) !== sha)
-  throw new Error(`Tag ${tag} does not point at ${sha}`)
+
+const tagObject = run('git', ['rev-parse', `${tag}^{}`])
+if (tagObject !== sha) throw new Error(`Tag ${tag} does not point at ${sha}`)
+if (run('git', ['cat-file', '-t', tag]) !== 'tag')
+  throw new Error(`Tag ${tag} must be an annotated tag (not lightweight)`)
 run('git', ['merge-base', '--is-ancestor', sha, 'origin/main'])
 
 if (metadata.name !== 'porteau') throw new Error('Unexpected package name')
@@ -112,10 +115,14 @@ if (metadata.repository?.url !== 'git+https://github.com/sebastiaanwouters/porte
   throw new Error('Unexpected package repository')
 if (metadata.publishConfig?.tag !== 'next')
   throw new Error('Alpha releases must publish under the next dist-tag')
+if (metadata.publishConfig?.access !== 'public')
+  throw new Error('Alpha releases must publish with public access')
 
 const repo = process.env.GITHUB_REPOSITORY
 const token = process.env.GITHUB_TOKEN
 if (!repo || !token) throw new Error('GITHUB_REPOSITORY and GITHUB_TOKEN are required')
+if (repo !== 'SebastiaanWouters/porteau')
+  throw new Error(`Refusing to release from unexpected repository ${repo}`)
 await assertCiGreen(repo, sha, token)
 
 console.log(`Validated ${tag} for porteau@${metadata.version}`)
