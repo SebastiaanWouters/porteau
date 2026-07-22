@@ -16,11 +16,9 @@ version="${GITHUB_REF_NAME#v}"
   exit 2
 }
 
-# Trusted publishing (OIDC) only — refuse long-lived tokens in this path.
-if [[ -n "${NPM_TOKEN:-}" || -n "${NODE_AUTH_TOKEN:-}" ]]; then
-  echo 'Refusing npm publish with NPM_TOKEN/NODE_AUTH_TOKEN set; use trusted publishing OIDC.' >&2
-  exit 2
-fi
+# Trusted publishing (OIDC) only — clear any token setup-node / secrets may inject.
+unset NPM_TOKEN NODE_AUTH_TOKEN
+export NPM_TOKEN='' NODE_AUTH_TOKEN=''
 
 npm_version="$(npm --version)"
 node -e 'const [v,min]=process.argv.slice(1).map(x=>x.split(".").map(Number)); process.exit(v[0]>min[0] || (v[0]===min[0] && (v[1]>min[1] || (v[1]===min[1] && v[2]>=min[2]))) ? 0 : 1)' \
