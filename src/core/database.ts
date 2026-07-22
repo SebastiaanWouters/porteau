@@ -1,6 +1,6 @@
 import mysql from 'mysql2/promise'
 import type { ConnectionOptions } from 'mysql2'
-import type { PorteauConfig } from './config.js'
+import type { ServerConfig } from './config.js'
 
 export interface QueryConnection {
   query(sql: string, values?: readonly unknown[]): Promise<readonly unknown[]>
@@ -39,10 +39,7 @@ export function sanitizeDatabaseError(error: unknown, fallback = 'DATABASE_ERROR
   return new DatabaseError({ code, ...(sqlState ? { sqlState } : {}) })
 }
 
-export function tlsOptions(
-  mode: PorteauConfig['connection']['tls'],
-  _host: string,
-): ConnectionOptions['ssl'] {
+export function tlsOptions(mode: ServerConfig['tls'], _host: string): ConnectionOptions['ssl'] {
   if (mode === 'disabled') return undefined
   if (mode === 'preferred' || mode === 'required') return { rejectUnauthorized: false }
   if (mode === 'verify-ca') return { rejectUnauthorized: true }
@@ -50,16 +47,24 @@ export function tlsOptions(
   return { rejectUnauthorized: true }
 }
 
+export type ConnectionEndpoint = {
+  readonly host: string
+  readonly port: number
+  readonly user?: string | undefined
+  readonly password?: string | undefined
+  readonly tls: ServerConfig['tls']
+}
+
 export function connectionOptions(
-  config: PorteauConfig['connection'],
+  server: ConnectionEndpoint,
   timeoutMilliseconds = 10_000,
 ): ConnectionOptions {
-  const ssl = tlsOptions(config.tls, config.host)
+  const ssl = tlsOptions(server.tls, server.host)
   return {
-    host: config.host,
-    port: config.port,
-    ...(config.user === undefined ? {} : { user: config.user }),
-    ...(config.password === undefined ? {} : { password: config.password }),
+    host: server.host,
+    port: server.port,
+    ...(server.user === undefined ? {} : { user: server.user }),
+    ...(server.password === undefined ? {} : { password: server.password }),
     ...(ssl === undefined ? {} : { ssl }),
     connectTimeout: timeoutMilliseconds,
     supportBigNumbers: true,

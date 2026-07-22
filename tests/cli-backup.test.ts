@@ -43,13 +43,152 @@ describe('guided backup', () => {
     expect(runBackup).not.toHaveBeenCalled()
   })
 
-  it('prompts only for missing values, revalidates them, and normalizes database lists', async () => {
-    const loads: unknown[] = []
+  it('defaults server and database when selection flags are omitted', async () => {
     const runBackup = vi.fn(async () => ({ outputDirectory: '/backup', warnings: 0 }))
-    const prompts: PromptAdapter = {
-      text: vi.fn().mockResolvedValueOnce(' backup_user ').mockResolvedValueOnce(' app, audit '),
-      password: vi.fn(async () => 'prompt-secret'),
-      confirm: vi.fn(),
+    expect(
+      await executeCli({
+        args: ['backup', '--no-interactive'],
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        services: {
+          loadConfig: async () =>
+            config({ user: 'backup', password: 'secret', databases: ['app'] }),
+          runBackup,
+        },
+      }),
+    ).toBe(0)
+    expect(runBackup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        run: expect.objectContaining({
+          server: expect.objectContaining({ id: 'local' }),
+          databases: [expect.objectContaining({ id: 'app', name: 'app' })],
+        }),
+      }),
+    )
+  })
+
+  it('honors --server and --database catalog keys', async () => {
+    const runBackup = vi.fn(async () => ({ outputDirectory: '/backup', warnings: 0 }))
+    const multi = {
+      ...config({ user: 'local-user', password: 'local-secret', databases: ['app', 'audit'] }),
+      servers: {
+        local: {
+          host: '127.0.0.1',
+          port: 3306,
+          user: 'local-user',
+          password: 'local-secret',
+          tls: 'preferred' as const,
+        },
+        staging: {
+          host: 'staging.example',
+          port: 3307,
+          user: 'staging-user',
+          password: 'staging-secret',
+          tls: 'preferred' as const,
+        },
+      },
+    }
+    expect(
+      await executeCli({
+        args: ['backup', '--server', 'staging', '--database', 'audit', '--no-interactive'],
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        services: { loadConfig: async () => multi, runBackup },
+      }),
+    ).toBe(0)
+    expect(runBackup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: { user: 'staging-user', password: 'staging-secret' },
+        run: expect.objectContaining({
+          server: expect.objectContaining({ id: 'staging', host: 'staging.example', port: 3307 }),
+          databases: [expect.objectContaining({ id: 'audit', name: 'audit' })],
+        }),
+      }),
+    )
+  })
+
+  it('surfaces unknown --server and --database errors', async () => {
+    const runBackup = vi.fn()
+    const unknownServer: string[] = []
+    expect(
+      await executeCli({
+        args: ['backup', '--json', '--server', 'missing', '--no-interactive'],
+        stdout: (line) => unknownServer.push(line),
+        stderr: vi.fn(),
+        services: {
+          loadConfig: async () => config({ user: 'backup', password: 'secret' }),
+          runBackup,
+        },
+      }),
+    ).toBe(1)
+    expect(JSON.parse(unknownServer.at(-1)!)).toMatchObject({
+      type: 'error',
+      error: { message: expect.stringMatching(/Unknown server "missing"/) },
+    })
+    expect(runBackup).not.toHaveBeenCalled()
+
+    const unknownDatabase: string[] = []
+    expect(
+      await executeCli({
+        args: ['backup', '--json', '--database', 'missing', '--no-interactive'],
+        stdout: (line) => unknownDatabase.push(line),
+        stderr: vi.fn(),
+        services: {
+          loadConfig: async () => config({ user: 'backup', password: 'secret' }),
+          runBackup,
+        },
+      }),
+    ).toBe(1)
+    expect(JSON.parse(unknownDatabase.at(-1)!)).toMatchObject({
+      type: 'error',
+      error: { message: expect.stringMatching(/Unknown database "missing"/) },
+    })
+    expect(runBackup).not.toHaveBeenCalled()
+  })
+
+  it('does not prompt for server or database when catalogs are single-entry', async () => {
+    const runBackup = vi.fn(async () => ({ outputDirectory: '/backup', warnings: 0 }))
+    const text = vi.fn().mockResolvedValueOnce('backup_user')
+    const password = vi.fn(async () => 'prompt-secret')
+    expect(
+      await executeCli({
+        args: ['backup'],
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        env: {},
+        stdinTTY: true,
+        stdoutTTY: true,
+        prompts: { ...noPrompts, text, password },
+        services: { loadConfig: async () => config({ databases: ['app'] }), runBackup },
+      }),
+    ).toBe(0)
+    expect(text).toHaveBeenCalledOnce()
+    expect(text).toHaveBeenCalledWith('Database user', expect.any(AbortSignal))
+    expect(password).toHaveBeenCalledOnce()
+    expect(runBackup).toHaveBeenCalledOnce()
+  })
+
+  it('prompts for server and database catalog keys when catalogs are multi-entry', async () => {
+    const runBackup = vi.fn(async () => ({ outputDirectory: '/backup', warnings: 0 }))
+    const text = vi.fn().mockResolvedValueOnce('staging').mockResolvedValueOnce('audit')
+    const multi = {
+      ...config({ databases: ['app', 'audit'] }),
+      servers: {
+        local: {
+          host: '127.0.0.1',
+          port: 3306,
+          user: 'local-user',
+          password: 'local-secret',
+          tls: 'preferred' as const,
+        },
+        staging: {
+          host: 'staging.example',
+          port: 3307,
+          user: 'staging-user',
+          password: 'staging-secret',
+          tls: 'preferred' as const,
+        },
+      },
     }
     expect(
       await executeCli({
@@ -59,27 +198,63 @@ describe('guided backup', () => {
         env: {},
         stdinTTY: true,
         stdoutTTY: true,
+        prompts: { ...noPrompts, text },
+        services: { loadConfig: async () => multi, runBackup },
+      }),
+    ).toBe(0)
+    expect(text).toHaveBeenCalledTimes(2)
+    expect(text.mock.calls[0]?.[0]).toMatch(/^Server catalog key \(local, staging\)$/)
+    expect(text.mock.calls[1]?.[0]).toMatch(
+      /^Database catalog key\(s\), comma-separated \(app, audit\)$/,
+    )
+    expect(runBackup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: { user: 'staging-user', password: 'staging-secret' },
+        run: expect.objectContaining({
+          server: expect.objectContaining({ id: 'staging' }),
+          databases: [expect.objectContaining({ id: 'audit' })],
+        }),
+      }),
+    )
+  })
+
+  it('prompts only for missing values, revalidates them, and normalizes database lists', async () => {
+    const loads: unknown[] = []
+    const runBackup = vi.fn(async () => ({ outputDirectory: '/backup', warnings: 0 }))
+    const prompts: PromptAdapter = {
+      text: vi.fn().mockResolvedValueOnce(' backup_user '),
+      password: vi.fn(async () => 'prompt-secret'),
+      confirm: vi.fn(),
+    }
+    expect(
+      await executeCli({
+        args: ['backup', '--database', ' app, audit '],
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+        env: {},
+        stdinTTY: true,
+        stdoutTTY: true,
         prompts,
         services: {
           loadConfig: async (options) => {
             loads.push(options)
-            return config()
+            return config({ databases: ['app', 'audit'] })
           },
           runBackup,
         },
       }),
     ).toBe(0)
     expect(loads).toHaveLength(1)
-    expect(loads[0]).toMatchObject({ flags: {} })
+    expect(loads[0]).not.toHaveProperty('flags')
     expect(runBackup).toHaveBeenCalledOnce()
     expect(runBackup).toHaveBeenCalledWith(
       expect.objectContaining({
-        config: expect.objectContaining({
-          connection: expect.objectContaining({
-            user: 'backup_user',
-            password: 'prompt-secret',
-          }),
-          include: { databases: ['app', 'audit'] },
+        credentials: { user: 'backup_user', password: 'prompt-secret' },
+        run: expect.objectContaining({
+          databases: [
+            expect.objectContaining({ id: 'app', name: 'app' }),
+            expect.objectContaining({ id: 'audit', name: 'audit' }),
+          ],
         }),
       }),
     )

@@ -5,17 +5,43 @@ import { defaultConfig, validateConfig } from '../core/config.js'
 import { normalizeList, normalizeRequired, promptOrAbort, UsageError } from './shared.js'
 import { defineCommand, type CommandContext } from './types.js'
 
+function catalogKey(name: string): string {
+  const key = name.replace(/[^A-Za-z0-9_-]+/gu, '-').replace(/^-+|-+$/gu, '')
+  return key || 'database'
+}
+
 function initialYaml(host: string, port: number, user: string | undefined, databases: string[]) {
   const yamlString = (value: string) => JSON.stringify(value)
+  const entries = databases.map((name) => ({ key: catalogKey(name), name }))
+  const unique = new Map<string, string>()
+  for (const entry of entries) {
+    let key = entry.key
+    let suffix = 2
+    while (unique.has(key)) {
+      key = `${entry.key}-${suffix}`
+      suffix += 1
+    }
+    unique.set(key, entry.name)
+  }
+  const databaseKeys = [...unique.keys()]
+  const defaultDatabase = databaseKeys[0]!
   return [
     '# Porteau configuration (passwords belong in PORTEAU_PASSWORD, never this file)',
-    'connection:',
-    `  host: ${yamlString(host)}`,
-    `  port: ${port}`,
-    ...(user ? [`  user: ${yamlString(user)}`] : []),
-    'include:',
-    '  databases:',
-    ...databases.map((item) => `    - ${yamlString(item)}`),
+    'artifacts:',
+    '  directory: "./backups"',
+    'defaults:',
+    '  server: local',
+    `  database: ${yamlString(defaultDatabase)}`,
+    'servers:',
+    '  local:',
+    `    host: ${yamlString(host)}`,
+    `    port: ${port}`,
+    ...(user ? [`    user: ${yamlString(user)}`] : []),
+    'databases:',
+    ...[...unique.entries()].flatMap(([key, name]) => [
+      `  ${key}:`,
+      `    name: ${yamlString(name)}`,
+    ]),
     '',
   ].join('\n')
 }
@@ -96,10 +122,19 @@ export const initCommand = defineCommand({
     const port = values.port ? Number(values.port) : 3306
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       throw new UsageError('--port must be an integer from 1 to 65535')
+    const registry = Object.fromEntries(databases.map((name) => [catalogKey(name), { name }]))
     validateConfig({
       ...defaultConfig,
-      connection: { ...defaultConfig.connection, host, port, ...(user ? { user } : {}) },
-      include: { databases },
+      defaults: { server: 'local', database: catalogKey(databases[0]!) },
+      servers: {
+        local: {
+          ...defaultConfig.servers.local,
+          host,
+          port,
+          ...(user ? { user } : {}),
+        },
+      },
+      databases: registry,
     })
     signal.throwIfAborted()
     try {

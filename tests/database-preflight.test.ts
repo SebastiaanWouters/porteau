@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test'
-import { defaultConfig, type PorteauConfig } from '../src/core/config.js'
+import { defaultConfig, defaultServer, type PorteauConfig } from '../src/core/config.js'
 import {
   connectionOptions,
   DatabaseError,
@@ -11,6 +11,46 @@ import {
 import { runBackupPreflight, runRestorePreflight } from '../src/core/preflight.js'
 
 const config = defaultConfig as PorteauConfig
+
+function backupPreflightArgs(
+  cfg: PorteauConfig,
+  rest: {
+    readonly databases: readonly string[]
+    readonly tablePatterns: readonly string[]
+    readonly profile?: 'production' | 'replica' | 'expert'
+    readonly connectionFactory?: Parameters<typeof runBackupPreflight>[0]['connectionFactory']
+  },
+) {
+  const server = defaultServer(cfg)
+  return {
+    connection: {
+      host: server.host,
+      port: server.port,
+      ...(server.user !== undefined ? { user: server.user } : {}),
+      ...(server.password !== undefined ? { password: server.password } : {}),
+      tls: server.tls,
+    },
+    includeViews: cfg.objects.views,
+    includeTriggers: cfg.objects.triggers,
+    profile: rest.profile ?? cfg.backup.profile,
+    consistencyMode: cfg.backup.consistency.mode,
+    databases: rest.databases,
+    tablePatterns: rest.tablePatterns,
+    ...(rest.connectionFactory ? { connectionFactory: rest.connectionFactory } : {}),
+  }
+}
+
+function restoreConnection(cfg: PorteauConfig = config) {
+  const server = defaultServer(cfg)
+  return {
+    host: server.host,
+    port: server.port,
+    ...(server.user !== undefined ? { user: server.user } : {}),
+    ...(server.password !== undefined ? { password: server.password } : {}),
+    tls: server.tls,
+  }
+}
+
 type Responses = {
   databases?: readonly unknown[]
   tables?: readonly unknown[]
@@ -72,13 +112,14 @@ async function preflight(
   profile: 'production' | 'replica' = 'production',
 ) {
   const state = fake(responses)
-  const report = await runBackupPreflight({
-    config,
-    databases: ['app'],
-    tablePatterns: ['app.*'],
-    profile,
-    connectionFactory: async () => state.connection,
-  })
+  const report = await runBackupPreflight(
+    backupPreflightArgs(config, {
+      databases: ['app'],
+      tablePatterns: ['app.*'],
+      profile,
+      connectionFactory: async () => state.connection,
+    }),
+  )
   return { report, state }
 }
 
@@ -209,12 +250,13 @@ describe('read-only backup preflight', () => {
     })
 
     await expect(
-      runBackupPreflight({
-        config: safeNoLockConfig(),
-        databases: ['app'],
-        tablePatterns: ['app.*'],
-        connectionFactory: async () => state.connection,
-      }),
+      runBackupPreflight(
+        backupPreflightArgs(safeNoLockConfig(), {
+          databases: ['app'],
+          tablePatterns: ['app.*'],
+          connectionFactory: async () => state.connection,
+        }),
+      ),
     ).resolves.toHaveProperty('tables')
   })
 
@@ -233,12 +275,13 @@ describe('read-only backup preflight', () => {
       })
 
       await expect(
-        runBackupPreflight({
-          config: safeNoLockConfig(),
-          databases: ['app'],
-          tablePatterns: ['app.*'],
-          connectionFactory: async () => state.connection,
-        }),
+        runBackupPreflight(
+          backupPreflightArgs(safeNoLockConfig(), {
+            databases: ['app'],
+            tablePatterns: ['app.*'],
+            connectionFactory: async () => state.connection,
+          }),
+        ),
       ).rejects.toThrow(new RegExp(missingPrivilege, 'u'))
     },
   )
@@ -249,12 +292,13 @@ describe('read-only backup preflight', () => {
     })
 
     await expect(
-      runBackupPreflight({
-        config: safeNoLockConfig(),
-        databases: ['app'],
-        tablePatterns: ['app.*'],
-        connectionFactory: async () => state.connection,
-      }),
+      runBackupPreflight(
+        backupPreflightArgs(safeNoLockConfig(), {
+          databases: ['app'],
+          tablePatterns: ['app.*'],
+          connectionFactory: async () => state.connection,
+        }),
+      ),
     ).rejects.toThrow(/REPLICATION CLIENT/u)
   })
 
@@ -310,12 +354,13 @@ describe('read-only backup preflight', () => {
     })
 
     await expect(
-      runBackupPreflight({
-        config: safeNoLockConfig(),
-        databases: ['scone_preview'],
-        tablePatterns: ['scone_preview.*'],
-        connectionFactory: async () => state.connection,
-      }),
+      runBackupPreflight(
+        backupPreflightArgs(safeNoLockConfig(), {
+          databases: ['scone_preview'],
+          tablePatterns: ['scone_preview.*'],
+          connectionFactory: async () => state.connection,
+        }),
+      ),
     ).resolves.toHaveProperty('tables')
   })
 
@@ -345,12 +390,13 @@ describe('read-only backup preflight', () => {
       ],
     })
     await expect(
-      runBackupPreflight({
-        config,
-        databases: ['app', 'audit'],
-        tablePatterns: ['app.*'],
-        connectionFactory: async () => state.connection,
-      }),
+      runBackupPreflight(
+        backupPreflightArgs(config, {
+          databases: ['app', 'audit'],
+          tablePatterns: ['app.*'],
+          connectionFactory: async () => state.connection,
+        }),
+      ),
     ).rejects.toThrow(/auto strategy/)
   })
 
@@ -358,23 +404,25 @@ describe('read-only backup preflight', () => {
     const state = fake({
       grants: [{ grant: 'GRANT SELECT, SHOW VIEW, TRIGGER ON `app`.* TO user' }],
     })
+    const noLockConfig: PorteauConfig = {
+      ...safeNoLockConfig(),
+      backup: {
+        ...safeNoLockConfig().backup,
+        consistency: {
+          ...safeNoLockConfig().backup.consistency,
+          mode: 'no-lock',
+        },
+      },
+    }
 
     await expect(
-      runBackupPreflight({
-        config: {
-          ...safeNoLockConfig(),
-          backup: {
-            ...safeNoLockConfig().backup,
-            consistency: {
-              ...safeNoLockConfig().backup.consistency,
-              mode: 'no-lock',
-            },
-          },
-        },
-        databases: ['app'],
-        tablePatterns: ['app.*'],
-        connectionFactory: async () => state.connection,
-      }),
+      runBackupPreflight(
+        backupPreflightArgs(noLockConfig, {
+          databases: ['app'],
+          tablePatterns: ['app.*'],
+          connectionFactory: async () => state.connection,
+        }),
+      ),
     ).resolves.toHaveProperty('tables')
   })
 
@@ -382,23 +430,25 @@ describe('read-only backup preflight', () => {
     const state = fake({
       grants: [{ grant: 'GRANT SHOW VIEW, TRIGGER ON `app`.* TO user' }],
     })
+    const noLockConfig: PorteauConfig = {
+      ...safeNoLockConfig(),
+      backup: {
+        ...safeNoLockConfig().backup,
+        consistency: {
+          ...safeNoLockConfig().backup.consistency,
+          mode: 'no-lock',
+        },
+      },
+    }
 
     await expect(
-      runBackupPreflight({
-        config: {
-          ...safeNoLockConfig(),
-          backup: {
-            ...safeNoLockConfig().backup,
-            consistency: {
-              ...safeNoLockConfig().backup.consistency,
-              mode: 'no-lock',
-            },
-          },
-        },
-        databases: ['app'],
-        tablePatterns: ['app.*'],
-        connectionFactory: async () => state.connection,
-      }),
+      runBackupPreflight(
+        backupPreflightArgs(noLockConfig, {
+          databases: ['app'],
+          tablePatterns: ['app.*'],
+          connectionFactory: async () => state.connection,
+        }),
+      ),
     ).rejects.toThrow(/no-lock strategy: SELECT/u)
   })
 })
@@ -452,7 +502,7 @@ describe('destination restore preflight', () => {
       const state = destination(0, exists)
       await expect(
         runRestorePreflight({
-          config,
+          connection: restoreConnection(),
           destinationDatabase: 'restored',
           destinationPolicy: 'require-empty',
           overwritePolicy: 'reject',
@@ -474,7 +524,7 @@ describe('destination restore preflight', () => {
     const nonempty = destination(2)
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -485,7 +535,7 @@ describe('destination restore preflight', () => {
     expect(nonempty.ended()).toBe(1)
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'drop',
@@ -499,7 +549,7 @@ describe('destination restore preflight', () => {
     const state = destination(2)
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'allow-existing',
         overwritePolicy: 'truncate',
@@ -513,7 +563,7 @@ describe('destination restore preflight', () => {
     const malformed = destination('not-a-count')
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -525,7 +575,7 @@ describe('destination restore preflight', () => {
     const disabled = destination(0, true, { sessionLogBin: false })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -537,7 +587,7 @@ describe('destination restore preflight', () => {
     const globallyDisabled = destination(0, true, { globalLogBin: false })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -551,7 +601,7 @@ describe('destination restore preflight', () => {
     const ineffective = destination(0, true, { disableEffective: false })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -563,7 +613,7 @@ describe('destination restore preflight', () => {
     const rejected = destination(0, true, { rejectDisable: true })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -577,7 +627,7 @@ describe('destination restore preflight', () => {
     })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -591,7 +641,7 @@ describe('destination restore preflight', () => {
     })
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -608,7 +658,7 @@ describe('destination restore preflight', () => {
 
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'scone_preview',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -623,7 +673,7 @@ describe('destination restore preflight', () => {
       'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION'
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -635,7 +685,7 @@ describe('destination restore preflight', () => {
 
     await expect(
       runRestorePreflight({
-        config,
+        connection: restoreConnection(),
         destinationDatabase: 'restored',
         destinationPolicy: 'require-empty',
         overwritePolicy: 'reject',
@@ -657,7 +707,7 @@ describe('destination restore preflight', () => {
       let connected = false
       await expect(
         runRestorePreflight({
-          config,
+          connection: restoreConnection(),
           destinationDatabase,
           destinationPolicy: 'require-empty',
           overwritePolicy: 'reject',

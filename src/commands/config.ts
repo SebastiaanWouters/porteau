@@ -1,22 +1,31 @@
 import { resolve } from 'node:path'
-import type { PorteauConfig } from '../core/config.js'
+import { defaultServer, type PorteauConfig } from '../core/config.js'
 import { defineCommand, type CommandContext } from './types.js'
 
 function publicConfig(config: PorteauConfig) {
+  const server = defaultServer(config)
   return {
-    connection: {
-      host: config.connection.host,
-      port: config.connection.port,
-      user: config.connection.user,
-      tls: config.connection.tls,
-      passwordConfigured: config.connection.password !== undefined,
-    },
+    artifacts: config.artifacts,
+    defaults: config.defaults,
+    servers: Object.fromEntries(
+      Object.entries(config.servers).map(([id, entry]) => [
+        id,
+        {
+          host: entry.host,
+          port: entry.port,
+          ...(entry.user !== undefined ? { user: entry.user } : {}),
+          tls: entry.tls,
+          passwordConfigured: entry.password !== undefined,
+        },
+      ]),
+    ),
+    databases: config.databases,
     tools: config.tools,
     backup: config.backup,
     restore: config.restore,
-    include: config.include,
     exclude: config.exclude,
     objects: config.objects,
+    passwordConfigured: server.password !== undefined,
   }
 }
 
@@ -35,10 +44,13 @@ export const configCommand = defineCommand({
       env,
       ...(values.config ? { configFile: resolve(cwd, String(values.config)) } : {}),
     })
-    presentation.registerSecret(config.connection.password)
+    for (const entry of Object.values(config.servers)) {
+      presentation.registerSecret(entry.password)
+    }
     signal.throwIfAborted()
-    await presentation.success('config', JSON.stringify(publicConfig(config), null, 2), {
-      config: publicConfig(config),
+    const view = publicConfig(config)
+    await presentation.success('config', JSON.stringify(view, null, 2), {
+      config: view,
     })
     return 0
   },
